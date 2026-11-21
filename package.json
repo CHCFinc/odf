@@ -1,0 +1,16 @@
+{
+  "name": "odf-student-tracker",
+  "version": "1.0.0",
+  "private": true,
+  "description": "CHCF Opening the Doors to the Future student tracker",
+  "main": "server.js",
+  "scripts": {
+    "build": "echo build",
+    "start": "node server.js"
+  },
+  "engines": { "node": ">=22" },
+  "dependencies": {
+    "express": "^4.21.2",
+    "mysql2": "^3.11.5"
+  }
+}

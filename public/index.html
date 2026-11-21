@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>ODF Student Tracker</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700&family=Public+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/app.css">
+</head>
+<body>
+
+<main class="wrap" id="view-login" hidden>
+  <form class="card" id="login-form">
+    <div>
+      <p class="eyebrow">Opening the Doors to the Future</p>
+      <h1>ODF Student Tracker</h1>
+    </div>
+    <p>Sign in with the account your program admin gave you.</p>
+    <label>Email<input id="l-email" type="email" autocomplete="username" required></label>
+    <label>Password<input id="l-pass" type="password" autocomplete="current-password" required></label>
+    <span class="err" id="login-err" role="alert"></span>
+    <button class="btn primary" type="submit" id="login-go">Sign in</button>
+  </form>
+</main>
+
+<div class="wrap" id="view-app" hidden>
+  <header>
+    <div>
+      <p class="eyebrow">Opening the Doors to the Future</p>
+      <h1>ODF Student Tracker</h1>
+    </div>
+    <div class="who">
+      <span id="who"></span>
+      <button class="btn small" id="open-staff" type="button" hidden>Staff accounts</button>
+      <button class="btn small" id="open-pass" type="button">Change password</button>
+      <button class="btn small" id="sign-out" type="button">Sign out</button>
+      <button class="btn primary" id="add-student" type="button">Add student</button>
+    </div>
+  </header>
+
+  <div class="stats" aria-label="Summary">
+    <div class="stat"><b id="st-total">0</b><span>Students on record</span></div>
+    <div class="stat"><b id="st-enrolled">0</b><span>Currently enrolled</span></div>
+    <div class="stat"><b id="st-alumni">0</b><span>Past students</span></div>
+    <div class="stat due"><b id="st-due">0</b><span>Yearly check-ins due</span></div>
+  </div>
+
+  <div class="bar">
+    <input type="search" id="q" placeholder="Search name, school, interest, company" aria-label="Search students">
+    <select id="f-cohort" aria-label="Filter by school year entered"><option value="">All entry years</option></select>
+    <select id="f-stat" aria-label="Filter by status">
+      <option value="">All statuses</option><option>Enrolled</option><option>Completed</option><option>Left early</option>
+    </select>
+    <label class="check"><input type="checkbox" id="f-due"> Check-in due</label>
+    <button class="btn" id="get-csv" type="button">Download CSV</button>
+  </div>
+
+  <div class="note" id="state"><strong>Loading students</strong>Fetching the student records.</div>
+  <div class="tablebox" id="tablebox" hidden>
+    <table>
+      <thead><tr><th>Student</th><th>Entered</th><th>Grade</th><th>Career interests</th><th>Status</th><th>Latest check-in</th></tr></thead>
+      <tbody id="rows"></tbody>
+    </table>
+  </div>
+</div>
+
+<dialog id="dlg-form" aria-labelledby="form-title">
+  <form class="dlg" id="student-form">
+    <div class="dlghead"><h2 id="form-title">Add student</h2></div>
+    <div class="grid">
+      <label>First name<input id="f-first" required autocomplete="off" maxlength="100"></label>
+      <label>Last name<input id="f-last" required autocomplete="off" maxlength="100"></label>
+      <label class="full">School<input id="f-school" autocomplete="off" maxlength="200"></label>
+      <label>School year entered ODF<select id="f-year" required></select></label>
+      <label>Date entered<input id="f-entry" type="date"></label>
+      <label>Grade when entered<select id="f-grade">
+        <option value="">Not recorded</option><option value="8">8th</option><option value="9">9th</option><option value="10">10th</option><option value="11">11th</option><option value="12">12th</option><option value="Other">Other</option>
+      </select></label>
+      <label>Program status<select id="f-status"><option>Enrolled</option><option>Completed</option><option>Left early</option></select></label>
+      <label>Email<input id="f-email" type="email" autocomplete="off" maxlength="190"></label>
+      <label>Phone<input id="f-phone" type="tel" autocomplete="off" maxlength="40"></label>
+      <label class="full">Initial career interests (separate with commas)<input id="f-careers" placeholder="Nursing, graphic design, law" autocomplete="off" maxlength="500"></label>
+      <label class="full">Hobbies<input id="f-hobbies" placeholder="Soccer, drawing, robotics club" autocomplete="off" maxlength="500"></label>
+      <label class="full">Notes<textarea id="f-notes" maxlength="5000"></textarea></label>
+    </div>
+    <div class="actions">
+      <span class="err" id="form-err" role="alert"></span>
+      <button class="btn" type="button" id="form-cancel">Cancel</button>
+      <button class="btn primary" type="submit" id="form-save">Save student</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="dlg-detail" aria-label="Student record"><div class="dlg" id="detail"></div></dialog>
+
+<dialog id="dlg-pass" aria-labelledby="pass-title">
+  <form class="dlg" id="pass-form">
+    <div class="dlghead"><h2 id="pass-title">Change password</h2></div>
+    <p class="empty" id="pass-why"></p>
+    <div class="stack">
+      <label>Current password<input id="p-cur" type="password" autocomplete="current-password" required></label>
+      <label>New password (at least 10 characters)<input id="p-new" type="password" autocomplete="new-password" required minlength="10"></label>
+      <label>New password again<input id="p-again" type="password" autocomplete="new-password" required minlength="10"></label>
+    </div>
+    <div class="actions">
+      <span class="err" id="pass-err" role="alert"></span>
+      <button class="btn" type="button" id="pass-cancel">Cancel</button>
+      <button class="btn primary" type="submit">Save password</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="dlg-staff" aria-labelledby="staff-title">
+  <div class="dlg">
+    <div class="dlghead"><h2 id="staff-title">Staff accounts</h2><button class="btn small" type="button" id="staff-close">Close</button></div>
+    <div class="stack" id="staff-list"></div>
+    <form class="inline" id="staff-form">
+      <h3>Add a staff member</h3>
+      <div class="grid">
+        <label>Name<input id="u-name" required autocomplete="off" maxlength="120"></label>
+        <label>Email<input id="u-email" type="email" required autocomplete="off" maxlength="190"></label>
+        <label>Access<select id="u-role"><option value="staff">Staff: add and update students</option><option value="admin">Admin: also manages accounts and deletes students</option></select></label>
+        <label>Temporary password (10+ characters)<input id="u-pass" required minlength="10" autocomplete="off"></label>
+      </div>
+      <p class="empty">Give them the temporary password yourself. They are asked to replace it the first time they sign in.</p>
+      <div class="actions"><span class="err" id="staff-err" role="alert"></span><button class="btn primary" type="submit">Add account</button></div>
+    </form>
+  </div>
+</dialog>
+
+<script src="/app.js"></script>
+</body>
+</html>

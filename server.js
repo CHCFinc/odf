@@ -1,0 +1,380 @@
+// ODF Student Tracker: Express + MySQL, built for GoDaddy Node.js Hosting.
+const express = require('express');
+const mysql = require('mysql2/promise');
+const crypto = require('crypto');
+const path = require('path');
+const { promisify } = require('util');
+
+const scrypt = promisify(crypto.scrypt);
+const app = express();
+const port = process.env.PORT || 3000;
+
+const pool = mysql.createPool({
+  host: process.env.DB_HOST,
+  port: process.env.DB_PORT,
+  database: process.env.DB_NAME,
+  user: process.env.DB_USER,
+  password: process.env.DB_PASSWORD,
+  waitForConnections: true,
+  connectionLimit: 5,
+  dateStrings: true,
+  charset: 'utf8mb4',
+});
+
+const SESSION_HOURS = 12;
+const COOKIE = 'odf_sid';
+const STATUSES = ['Enrolled', 'Completed', 'Left early'];
+const DOING = ['In high school', 'In college', 'Trade or certificate program', 'College and working', 'Working full time',
+  'Working part time', 'Military', 'Looking for work', 'Other', 'Could not reach'];
+const GRADES = ['', '8', '9', '10', '11', '12', 'Other'];
+
+/* ---------- schema (safe to run on every start, and from two instances at once) ---------- */
+const SCHEMA = [
+  `CREATE TABLE IF NOT EXISTS users (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    email VARCHAR(190) NOT NULL UNIQUE,
+    name VARCHAR(120) NOT NULL DEFAULT '',
+    role VARCHAR(10) NOT NULL DEFAULT 'staff',
+    pass_hash VARCHAR(255) NOT NULL,
+    must_change TINYINT(1) NOT NULL DEFAULT 0,
+    active TINYINT(1) NOT NULL DEFAULT 1,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+  `CREATE TABLE IF NOT EXISTS sessions (
+    token_hash CHAR(64) PRIMARY KEY,
+    user_id INT NOT NULL,
+    expires_at DATETIME NOT NULL,
+    INDEX idx_sessions_user (user_id),
+    CONSTRAINT fk_sessions_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+  `CREATE TABLE IF NOT EXISTS students (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    first_name VARCHAR(100) NOT NULL,
+    last_name VARCHAR(100) NOT NULL,
+    school VARCHAR(200) NOT NULL DEFAULT '',
+    school_year VARCHAR(7) NOT NULL DEFAULT '',
+    entry_date DATE NULL,
+    grade VARCHAR(10) NOT NULL DEFAULT '',
+    status VARCHAR(20) NOT NULL DEFAULT 'Enrolled',
+    email VARCHAR(190) NOT NULL DEFAULT '',
+    phone VARCHAR(40) NOT NULL DEFAULT '',
+    careers VARCHAR(500) NOT NULL DEFAULT '',
+    hobbies VARCHAR(500) NOT NULL DEFAULT '',
+    notes TEXT NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_by INT NULL
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+  `CREATE TABLE IF NOT EXISTS internships (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    student_id INT NOT NULL,
+    company VARCHAR(200) NOT NULL DEFAULT '',
+    role VARCHAR(200) NOT NULL DEFAULT '',
+    start_date DATE NULL,
+    end_date DATE NULL,
+    notes TEXT NULL,
+    INDEX idx_internships_student (student_id),
+    CONSTRAINT fk_internships_student FOREIGN KEY (student_id) REFERENCES students(id) ON DELETE CASCADE
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+  `CREATE TABLE IF NOT EXISTS checkins (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    student_id INT NOT NULL,
+    checkin_date DATE NOT NULL,
+    doing VARCHAR(60) NOT NULL DEFAULT '',
+    place VARCHAR(200) NOT NULL DEFAULT '',
+    detail VARCHAR(200) NOT NULL DEFAULT '',
+    notes TEXT NULL,
+    recorded_by INT NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_checkins_student (student_id),
+    CONSTRAINT fk_checkins_student FOREIGN KEY (student_id) REFERENCES students(id) ON DELETE CASCADE
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+];
+
+/* ---------- helpers ---------- */
+const str = (v, max) => (typeof v === 'string' ? v.trim().slice(0, max) : '');
+const dateOrNull = (v) => (typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v) && !Number.isNaN(Date.parse(v)) ? v : null);
+const sha256 = (s) => crypto.createHash('sha256').update(s).digest('hex');
+const wrap = (fn) => (req, res, next) => fn(req, res, next).catch(next);
+const validEmail = (e) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e);
+
+async function hashPassword(pw) {
+  const salt = crypto.randomBytes(16);
+  const key = await scrypt(pw, salt, 64);
+  return `scrypt$${salt.toString('hex')}$${key.toString('hex')}`;
+}
+async function checkPassword(pw, stored) {
+  const parts = String(stored || '').split('$');
+  if (parts.length !== 3 || parts[0] !== 'scrypt') return false;
+  const expected = Buffer.from(parts[2], 'hex');
+  const key = await scrypt(pw, Buffer.from(parts[1], 'hex'), expected.length || 64);
+  return expected.length === key.length && crypto.timingSafeEqual(expected, key);
+}
+const passwordProblem = (pw) => (typeof pw !== 'string' || pw.length < 10 ? 'Use a password of at least 10 characters.' : pw.length > 200 ? 'That password is too long.' : '');
+
+function readCookie(req) {
+  const raw = req.headers.cookie || '';
+  for (const part of raw.split(';')) {
+    const i = part.indexOf('=');
+    if (i > 0 && part.slice(0, i).trim() === COOKIE) return part.slice(i + 1).trim();
+  }
+  return '';
+}
+function setCookie(req, res, value, maxAgeSec) {
+  const secure = req.secure || String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim() === 'https';
+  res.setHeader('Set-Cookie', `${COOKIE}=${value}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAgeSec}${secure ? '; Secure' : ''}`);
+}
+
+/* ---------- app setup ---------- */
+app.set('trust proxy', true);
+app.disable('x-powered-by');
+app.use((req, res, next) => {
+  res.setHeader('Content-Security-Policy', "default-src 'self'; style-src 'self' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'");
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Referrer-Policy', 'same-origin');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('X-Robots-Tag', 'noindex, nofollow');
+  next();
+});
+app.get('/healthz', (req, res) => res.json({ ok: true }));
+app.get('/robots.txt', (req, res) => res.type('text/plain').send('User-agent: *\nDisallow: /\n'));
+app.use(express.static(path.join(__dirname, 'public'), { maxAge: 0 }));
+app.use('/api', express.json({ limit: '100kb' }));
+app.use('/api', (req, res, next) => {
+  res.setHeader('Cache-Control', 'no-store');
+  // Every change must come from this app's own pages: other sites cannot send this header.
+  if (req.method !== 'GET' && req.headers['x-requested-with'] !== 'odf') return res.status(403).json({ error: 'Request refused.' });
+  next();
+});
+
+const auth = wrap(async (req, res, next) => {
+  const token = readCookie(req);
+  if (!token) return res.status(401).json({ error: 'Sign in to continue.' });
+  const [rows] = await pool.execute(
+    `SELECT u.id, u.email, u.name, u.role, u.must_change FROM sessions s JOIN users u ON u.id = s.user_id
+     WHERE s.token_hash = ? AND s.expires_at > NOW() AND u.active = 1`, [sha256(token)]);
+  if (!rows.length) return res.status(401).json({ error: 'Sign in to continue.' });
+  req.user = rows[0];
+  req.tokenHash = sha256(token);
+  next();
+});
+// Staff with a temporary password can do nothing but replace it.
+const ready = (req, res, next) => (req.user.must_change ? res.status(403).json({ error: 'Set a new password first.', mustChange: true }) : next());
+const admin = (req, res, next) => (req.user.role === 'admin' ? next() : res.status(403).json({ error: 'Only an admin can do that.' }));
+const me = (u) => ({ id: u.id, email: u.email, name: u.name, role: u.role, mustChange: !!u.must_change });
+
+/* ---------- sign in / out ---------- */
+const attempts = new Map(); // email -> { count, until }
+app.post('/api/login', wrap(async (req, res) => {
+  const email = str(req.body.email, 190).toLowerCase();
+  const password = typeof req.body.password === 'string' ? req.body.password : '';
+  const a = attempts.get(email);
+  if (a && a.until > Date.now()) return res.status(429).json({ error: 'Too many attempts. Try again in 15 minutes.' });
+  const [rows] = await pool.execute('SELECT * FROM users WHERE email = ? AND active = 1', [email]);
+  const user = rows[0];
+  const ok = await checkPassword(password, user ? user.pass_hash : 'scrypt$00$00') && !!user;
+  if (!ok) {
+    const count = (a && a.until > Date.now() - 9e5 ? a.count : 0) + 1;
+    attempts.set(email, { count, until: count >= 8 ? Date.now() + 9e5 : Date.now() });
+    if (attempts.size > 5000) attempts.clear();
+    return res.status(401).json({ error: 'That email and password do not match.' });
+  }
+  attempts.delete(email);
+  const token = crypto.randomBytes(32).toString('hex');
+  await pool.execute('DELETE FROM sessions WHERE expires_at < NOW()');
+  await pool.execute('INSERT INTO sessions (token_hash, user_id, expires_at) VALUES (?, ?, DATE_ADD(NOW(), INTERVAL ? HOUR))', [sha256(token), user.id, SESSION_HOURS]);
+  setCookie(req, res, token, SESSION_HOURS * 3600);
+  res.json({ user: me(user) });
+}));
+app.post('/api/logout', auth, wrap(async (req, res) => {
+  await pool.execute('DELETE FROM sessions WHERE token_hash = ?', [req.tokenHash]);
+  setCookie(req, res, '', 0);
+  res.json({ ok: true });
+}));
+app.get('/api/me', auth, (req, res) => res.json({ user: me(req.user) }));
+app.post('/api/password', auth, wrap(async (req, res) => {
+  const [rows] = await pool.execute('SELECT pass_hash FROM users WHERE id = ?', [req.user.id]);
+  if (!(await checkPassword(String(req.body.current || ''), rows[0].pass_hash))) return res.status(400).json({ error: 'Your current password is not right.' });
+  const problem = passwordProblem(req.body.next);
+  if (problem) return res.status(400).json({ error: problem });
+  if (req.body.next === req.body.current) return res.status(400).json({ error: 'Choose a password different from the current one.' });
+  await pool.execute('UPDATE users SET pass_hash = ?, must_change = 0 WHERE id = ?', [await hashPassword(req.body.next), req.user.id]);
+  await pool.execute('DELETE FROM sessions WHERE user_id = ? AND token_hash <> ?', [req.user.id, req.tokenHash]);
+  res.json({ ok: true });
+}));
+
+/* ---------- students ---------- */
+function studentFields(b) {
+  const f = {
+    first_name: str(b.firstName, 100), last_name: str(b.lastName, 100), school: str(b.school, 200),
+    school_year: str(b.schoolYear, 7), entry_date: dateOrNull(b.entryDate), grade: str(b.grade, 10),
+    status: str(b.status, 20), email: str(b.email, 190), phone: str(b.phone, 40),
+    careers: str(b.careers, 500), hobbies: str(b.hobbies, 500), notes: str(b.notes, 5000),
+  };
+  if (!f.first_name || !f.last_name) return { error: 'First and last name are required.' };
+  if (!/^\d{4}-\d{2}$/.test(f.school_year)) return { error: 'Pick the school year the student entered.' };
+  if (!STATUSES.includes(f.status)) return { error: 'Pick a program status.' };
+  if (!GRADES.includes(f.grade)) return { error: 'Pick a grade from the list.' };
+  if (f.email && !validEmail(f.email)) return { error: 'That student email does not look right.' };
+  return { f };
+}
+app.get('/api/students', auth, ready, wrap(async (req, res) => {
+  const [students] = await pool.query(
+    `SELECT s.*, u.name AS updated_by_name FROM students s LEFT JOIN users u ON u.id = s.updated_by ORDER BY s.last_name, s.first_name`);
+  const [interns] = await pool.query('SELECT * FROM internships ORDER BY start_date DESC, id DESC');
+  const [checks] = await pool.query(
+    `SELECT c.*, u.name AS by_name FROM checkins c LEFT JOIN users u ON u.id = c.recorded_by ORDER BY c.checkin_date DESC, c.id DESC`);
+  const byId = new Map();
+  const out = students.map((s) => {
+    const o = {
+      id: s.id, firstName: s.first_name, lastName: s.last_name, school: s.school, schoolYear: s.school_year,
+      entryDate: s.entry_date || '', grade: s.grade, status: s.status, email: s.email, phone: s.phone,
+      careers: s.careers, hobbies: s.hobbies, notes: s.notes || '', updatedAt: s.updated_at,
+      updatedByName: s.updated_by_name || '', internships: [], checkins: [],
+    };
+    byId.set(s.id, o);
+    return o;
+  });
+  for (const i of interns) {
+    const s = byId.get(i.student_id);
+    if (s) s.internships.push({ id: i.id, company: i.company, role: i.role, start: i.start_date || '', end: i.end_date || '', notes: i.notes || '' });
+  }
+  for (const c of checks) {
+    const s = byId.get(c.student_id);
+    if (s) s.checkins.push({ id: c.id, date: c.checkin_date, doing: c.doing, where: c.place, detail: c.detail, notes: c.notes || '', byName: c.by_name || '' });
+  }
+  res.json({ students: out });
+}));
+app.post('/api/students', auth, ready, wrap(async (req, res) => {
+  const { f, error } = studentFields(req.body);
+  if (error) return res.status(400).json({ error });
+  const [r] = await pool.execute(
+    `INSERT INTO students (first_name, last_name, school, school_year, entry_date, grade, status, email, phone, careers, hobbies, notes, updated_by)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [f.first_name, f.last_name, f.school, f.school_year, f.entry_date, f.grade, f.status, f.email, f.phone, f.careers, f.hobbies, f.notes, req.user.id]);
+  res.json({ id: r.insertId });
+}));
+app.put('/api/students/:id', auth, ready, wrap(async (req, res) => {
+  const { f, error } = studentFields(req.body);
+  if (error) return res.status(400).json({ error });
+  const [r] = await pool.execute(
+    `UPDATE students SET first_name=?, last_name=?, school=?, school_year=?, entry_date=?, grade=?, status=?, email=?, phone=?, careers=?, hobbies=?, notes=?,
+     updated_at=NOW(), updated_by=? WHERE id=?`,
+    [f.first_name, f.last_name, f.school, f.school_year, f.entry_date, f.grade, f.status, f.email, f.phone, f.careers, f.hobbies, f.notes, req.user.id, Number(req.params.id) || 0]);
+  if (!r.affectedRows) return res.status(404).json({ error: 'That student record no longer exists.' });
+  res.json({ ok: true });
+}));
+app.delete('/api/students/:id', auth, ready, admin, wrap(async (req, res) => {
+  await pool.execute('DELETE FROM students WHERE id = ?', [Number(req.params.id) || 0]);
+  res.json({ ok: true });
+}));
+
+const touch = (id, userId) => pool.execute('UPDATE students SET updated_at = NOW(), updated_by = ? WHERE id = ?', [userId, id]);
+const studentExists = async (id) => (await pool.execute('SELECT id FROM students WHERE id = ?', [id]))[0].length > 0;
+
+app.post('/api/students/:id/internships', auth, ready, wrap(async (req, res) => {
+  const id = Number(req.params.id) || 0;
+  const company = str(req.body.company, 200);
+  if (!company) return res.status(400).json({ error: 'Enter the company name.' });
+  if (!(await studentExists(id))) return res.status(404).json({ error: 'That student record no longer exists.' });
+  await pool.execute('INSERT INTO internships (student_id, company, role, start_date, end_date, notes) VALUES (?, ?, ?, ?, ?, ?)',
+    [id, company, str(req.body.role, 200), dateOrNull(req.body.start), dateOrNull(req.body.end), str(req.body.notes, 5000)]);
+  await touch(id, req.user.id);
+  res.json({ ok: true });
+}));
+app.delete('/api/internships/:id', auth, ready, wrap(async (req, res) => {
+  const iid = Number(req.params.id) || 0;
+  const [rows] = await pool.execute('SELECT student_id FROM internships WHERE id = ?', [iid]);
+  await pool.execute('DELETE FROM internships WHERE id = ?', [iid]);
+  if (rows.length) await touch(rows[0].student_id, req.user.id);
+  res.json({ ok: true });
+}));
+app.post('/api/students/:id/checkins', auth, ready, wrap(async (req, res) => {
+  const id = Number(req.params.id) || 0;
+  const date = dateOrNull(req.body.date);
+  const doing = str(req.body.doing, 60);
+  if (!date) return res.status(400).json({ error: 'Enter the check-in date.' });
+  if (!DOING.includes(doing)) return res.status(400).json({ error: 'Pick what the student is doing now.' });
+  if (!(await studentExists(id))) return res.status(404).json({ error: 'That student record no longer exists.' });
+  await pool.execute('INSERT INTO checkins (student_id, checkin_date, doing, place, detail, notes, recorded_by) VALUES (?, ?, ?, ?, ?, ?, ?)',
+    [id, date, doing, str(req.body.where, 200), str(req.body.detail, 200), str(req.body.notes, 5000), req.user.id]);
+  await touch(id, req.user.id);
+  res.json({ ok: true });
+}));
+app.delete('/api/checkins/:id', auth, ready, wrap(async (req, res) => {
+  const cid = Number(req.params.id) || 0;
+  const [rows] = await pool.execute('SELECT student_id FROM checkins WHERE id = ?', [cid]);
+  await pool.execute('DELETE FROM checkins WHERE id = ?', [cid]);
+  if (rows.length) await touch(rows[0].student_id, req.user.id);
+  res.json({ ok: true });
+}));
+
+/* ---------- staff accounts (admins only) ---------- */
+app.get('/api/users', auth, ready, admin, wrap(async (req, res) => {
+  const [rows] = await pool.query('SELECT id, email, name, role, active, must_change FROM users ORDER BY active DESC, name, email');
+  res.json({ users: rows.map((u) => ({ id: u.id, email: u.email, name: u.name, role: u.role, active: !!u.active, mustChange: !!u.must_change })) });
+}));
+app.post('/api/users', auth, ready, admin, wrap(async (req, res) => {
+  const email = str(req.body.email, 190).toLowerCase();
+  const name = str(req.body.name, 120);
+  const role = req.body.role === 'admin' ? 'admin' : 'staff';
+  if (!validEmail(email)) return res.status(400).json({ error: 'Enter a valid email address.' });
+  if (!name) return res.status(400).json({ error: 'Enter the person’s name.' });
+  const problem = passwordProblem(req.body.password);
+  if (problem) return res.status(400).json({ error: problem });
+  try {
+    await pool.execute('INSERT INTO users (email, name, role, pass_hash, must_change) VALUES (?, ?, ?, ?, 1)', [email, name, role, await hashPassword(req.body.password)]);
+  } catch (e) {
+    if (e.code === 'ER_DUP_ENTRY') return res.status(400).json({ error: 'Someone already has an account with that email.' });
+    throw e;
+  }
+  res.json({ ok: true });
+}));
+app.put('/api/users/:id', auth, ready, admin, wrap(async (req, res) => {
+  const id = Number(req.params.id) || 0;
+  const [rows] = await pool.execute('SELECT * FROM users WHERE id = ?', [id]);
+  const u = rows[0];
+  if (!u) return res.status(404).json({ error: 'That account no longer exists.' });
+  const role = req.body.role === 'admin' || req.body.role === 'staff' ? req.body.role : u.role;
+  const active = typeof req.body.active === 'boolean' ? (req.body.active ? 1 : 0) : u.active;
+  if (id === req.user.id && (role !== 'admin' || !active)) return res.status(400).json({ error: 'You cannot remove your own admin access.' });
+  if (req.body.password !== undefined) {
+    const problem = passwordProblem(req.body.password);
+    if (problem) return res.status(400).json({ error: problem });
+    await pool.execute('UPDATE users SET pass_hash = ?, must_change = 1 WHERE id = ?', [await hashPassword(req.body.password), id]);
+    await pool.execute('DELETE FROM sessions WHERE user_id = ?', [id]);
+  }
+  await pool.execute('UPDATE users SET role = ?, active = ? WHERE id = ?', [role, active, id]);
+  if (!active) await pool.execute('DELETE FROM sessions WHERE user_id = ?', [id]);
+  res.json({ ok: true });
+}));
+
+app.use('/api', (req, res) => res.status(404).json({ error: 'Not found.' }));
+app.use((err, req, res, next) => {
+  if (err && err.type === 'entity.parse.failed') return res.status(400).json({ error: 'Request refused.' });
+  console.error('Request failed:', req.method, req.path, err && err.message);
+  res.status(500).json({ error: 'Something went wrong on the server. Try again.' });
+});
+
+/* ---------- start ---------- */
+async function start() {
+  for (const k of ['DB_HOST', 'DB_NAME', 'DB_USER']) {
+    if (!process.env[k]) throw new Error(`${k} is not set. Add the managed MySQL database to this app in GoDaddy Node.js Hosting.`);
+  }
+  for (const sql of SCHEMA) await pool.query(sql);
+  const [[{ n }]] = await pool.query('SELECT COUNT(*) AS n FROM users');
+  if (!n) {
+    const email = str(process.env.ADMIN_EMAIL, 190).toLowerCase();
+    const pw = process.env.ADMIN_PASSWORD || '';
+    if (validEmail(email) && !passwordProblem(pw)) {
+      try {
+        await pool.execute("INSERT INTO users (email, name, role, pass_hash, must_change) VALUES (?, 'Administrator', 'admin', ?, 1)", [email, await hashPassword(pw)]);
+        console.log(`Created the first admin account for ${email}.`);
+      } catch (e) { if (e.code !== 'ER_DUP_ENTRY') throw e; }
+    } else {
+      console.warn('No accounts exist yet. Set ADMIN_EMAIL and ADMIN_PASSWORD (10+ characters) and restart to create the first admin.');
+    }
+  }
+  app.listen(port, '0.0.0.0', () => console.log(`ODF Student Tracker listening on ${port}`));
+}
+start().catch((e) => { console.error('Startup failed:', e.message); process.exit(1); });
