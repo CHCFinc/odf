@@ -617,6 +617,17 @@ $('staff-form').addEventListener('submit', async (e) => {
   } catch (err) { $('staff-err').textContent = err.message; }
 });
 
+/* ---------- light / dark ---------- */
+const THEME_LABEL = { auto: 'Match device', light: 'Light', dark: 'Dark' };
+function currentTheme() { try { const t = localStorage.getItem('odf-theme'); return t === 'light' || t === 'dark' ? t : 'auto'; } catch (e) { return 'auto'; } }
+function applyTheme(t) {
+  try { if (t === 'auto') localStorage.removeItem('odf-theme'); else localStorage.setItem('odf-theme', t); } catch (e) { /* the choice still applies until the page is closed */ }
+  if (t === 'auto') document.documentElement.removeAttribute('data-theme'); else document.documentElement.setAttribute('data-theme', t);
+  for (const b of document.querySelectorAll('.theme-btn')) { b.textContent = 'Theme: ' + THEME_LABEL[t]; b.dataset.theme = t; }
+}
+for (const b of document.querySelectorAll('.theme-btn')) b.addEventListener('click', () => applyTheme({ auto: 'light', light: 'dark', dark: 'auto' }[b.dataset.theme || 'auto']));
+applyTheme(currentTheme());
+
 /* ---------- start ---------- */
 (async () => {
   try { me = (await fetch('/api/me', { credentials: 'same-origin' }).then((r) => (r.ok ? r.json() : null)) || {}).user || null; } catch (e) { me = null; }

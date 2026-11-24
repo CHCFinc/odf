@@ -9,6 +9,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700&family=Public+Sans:wght@400;500;600&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/app.css">
+<script src="/theme.js"></script>
 </head>
 <body>
 
@@ -23,6 +24,7 @@
     <label>Password<input id="l-pass" type="password" autocomplete="current-password" required></label>
     <span class="err" id="login-err" role="alert"></span>
     <button class="btn primary" type="submit" id="login-go">Sign in</button>
+    <button class="btn link theme-btn" type="button">Theme</button>
   </form>
 </main>
 
@@ -35,6 +37,7 @@
     <div class="who">
       <span id="who"></span>
       <button class="btn small" id="open-staff" type="button" hidden>Staff accounts</button>
+      <button class="btn small theme-btn" type="button">Theme</button>
       <button class="btn small" id="open-pass" type="button">Change password</button>
       <button class="btn small" id="sign-out" type="button">Sign out</button>
       <button class="btn primary" id="add-student" type="button">Add student</button>
