@@ -41,6 +41,14 @@
     </div>
   </header>
 
+  <nav class="tabs" aria-label="Sections">
+    <button class="tab" type="button" data-tab="students" aria-current="page">Students</button>
+    <button class="tab" type="button" data-tab="schools">Schools</button>
+    <button class="tab" type="button" data-tab="companies">Companies</button>
+    <button class="tab" type="button" data-tab="reports">Reports</button>
+  </nav>
+
+  <section class="pane" id="tab-students">
   <div class="stats" aria-label="Summary">
     <div class="stat"><b id="st-total">0</b><span>Students on record</span></div>
     <div class="stat"><b id="st-enrolled">0</b><span>Currently enrolled</span></div>
@@ -65,6 +73,46 @@
       <tbody id="rows"></tbody>
     </table>
   </div>
+  </section>
+
+  <section class="pane" id="tab-schools" hidden>
+    <div class="blockhead"><h2>Schools</h2><button class="btn primary" type="button" id="add-schools">Add school</button></div>
+    <div class="note" id="schools-empty" hidden><strong>No schools yet</strong>Add the schools ODF recruits from, with a contact person at each. Schools typed on a student record are added here automatically.</div>
+    <div class="tablebox" id="schools-box" hidden><table>
+      <thead><tr><th>School</th><th>Address</th><th>Contact</th><th>Phone and email</th><th>Students</th></tr></thead>
+      <tbody id="schools-rows"></tbody>
+    </table></div>
+  </section>
+
+  <section class="pane" id="tab-companies" hidden>
+    <div class="blockhead"><h2>Companies</h2><button class="btn primary" type="button" id="add-companies">Add company</button></div>
+    <div class="note" id="companies-empty" hidden><strong>No companies yet</strong>Add the companies that host ODF interns, with a contact person at each. Companies typed on an internship are added here automatically.</div>
+    <div class="tablebox" id="companies-box" hidden><table>
+      <thead><tr><th>Company</th><th>Address</th><th>Contact</th><th>Phone and email</th><th>Internships</th></tr></thead>
+      <tbody id="companies-rows"></tbody>
+    </table></div>
+  </section>
+
+  <section class="pane" id="tab-reports" hidden>
+    <div class="bar">
+      <select id="r-type" aria-label="Report">
+        <option value="enrollment">Enrollment</option>
+        <option value="outcomes">Alumni outcomes</option>
+        <option value="internships">Internship placements</option>
+        <option value="due">Check-ins due</option>
+      </select>
+      <select id="r-year" aria-label="School year entered"></select>
+      <select id="r-school" aria-label="School"></select>
+      <select id="r-company" aria-label="Company"></select>
+      <select id="r-status" aria-label="Status">
+        <option value="">All statuses</option><option>Enrolled</option><option>Completed</option><option>Left early</option>
+      </select>
+      <span class="grow"></span>
+      <button class="btn" type="button" id="r-csv">Download CSV</button>
+      <button class="btn" type="button" id="r-print">Print</button>
+    </div>
+    <div class="report" id="report"></div>
+  </section>
 </div>
 
 <dialog id="dlg-form" aria-labelledby="form-title">
@@ -73,7 +121,7 @@
     <div class="grid">
       <label>First name<input id="f-first" required autocomplete="off" maxlength="100"></label>
       <label>Last name<input id="f-last" required autocomplete="off" maxlength="100"></label>
-      <label class="full">School<input id="f-school" autocomplete="off" maxlength="200"></label>
+      <div class="full" id="f-school-box"></div>
       <label>School year entered ODF<select id="f-year" required></select></label>
       <label>Date entered<input id="f-entry" type="date"></label>
       <label>Grade when entered<select id="f-grade">
@@ -95,6 +143,26 @@
 </dialog>
 
 <dialog id="dlg-detail" aria-label="Student record"><div class="dlg" id="detail"></div></dialog>
+
+<dialog id="dlg-org" aria-labelledby="org-title">
+  <form class="dlg" id="org-form">
+    <div class="dlghead"><h2 id="org-title">Add school</h2></div>
+    <div class="grid">
+      <label class="full">Name<input id="o-name" required autocomplete="off" maxlength="200"></label>
+      <label class="full">Address or neighborhood<input id="o-address" autocomplete="off" maxlength="300"></label>
+      <label>Contact person<input id="o-contact" autocomplete="off" maxlength="120"></label>
+      <label>Contact phone<input id="o-phone" type="tel" autocomplete="off" maxlength="40"></label>
+      <label class="full">Contact email<input id="o-email" type="email" autocomplete="off" maxlength="190"></label>
+      <label class="full">Notes<textarea id="o-notes" maxlength="5000"></textarea></label>
+    </div>
+    <div class="actions">
+      <span id="org-delete"></span>
+      <span class="err" id="org-err" role="alert"></span>
+      <button class="btn" type="button" id="org-cancel">Cancel</button>
+      <button class="btn primary" type="submit" id="org-save">Save</button>
+    </div>
+  </form>
+</dialog>
 
 <dialog id="dlg-pass" aria-labelledby="pass-title">
   <form class="dlg" id="pass-form">

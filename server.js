@@ -89,6 +89,29 @@ const SCHEMA = [
     INDEX idx_checkins_student (student_id),
     CONSTRAINT fk_checkins_student FOREIGN KEY (student_id) REFERENCES students(id) ON DELETE CASCADE
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+  `CREATE TABLE IF NOT EXISTS schools (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    name VARCHAR(200) NOT NULL UNIQUE,
+    address VARCHAR(300) NOT NULL DEFAULT '',
+    contact_name VARCHAR(120) NOT NULL DEFAULT '',
+    contact_email VARCHAR(190) NOT NULL DEFAULT '',
+    contact_phone VARCHAR(40) NOT NULL DEFAULT '',
+    notes TEXT NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+  `CREATE TABLE IF NOT EXISTS companies (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    name VARCHAR(200) NOT NULL UNIQUE,
+    address VARCHAR(300) NOT NULL DEFAULT '',
+    contact_name VARCHAR(120) NOT NULL DEFAULT '',
+    contact_email VARCHAR(190) NOT NULL DEFAULT '',
+    contact_phone VARCHAR(40) NOT NULL DEFAULT '',
+    notes TEXT NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+  // Carry names already typed on student and internship records into the two directories.
+  "INSERT IGNORE INTO schools (name) SELECT DISTINCT TRIM(school) FROM students WHERE TRIM(school) <> ''",
+  "INSERT IGNORE INTO companies (name) SELECT DISTINCT TRIM(company) FROM internships WHERE TRIM(company) <> ''",
 ];
 
 /* ---------- helpers ---------- */
@@ -248,6 +271,7 @@ app.get('/api/students', auth, ready, wrap(async (req, res) => {
 app.post('/api/students', auth, ready, wrap(async (req, res) => {
   const { f, error } = studentFields(req.body);
   if (error) return res.status(400).json({ error });
+  await ensureOrg('schools', f.school);
   const [r] = await pool.execute(
     `INSERT INTO students (first_name, last_name, school, school_year, entry_date, grade, status, email, phone, careers, hobbies, notes, updated_by)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -257,6 +281,7 @@ app.post('/api/students', auth, ready, wrap(async (req, res) => {
 app.put('/api/students/:id', auth, ready, wrap(async (req, res) => {
   const { f, error } = studentFields(req.body);
   if (error) return res.status(400).json({ error });
+  await ensureOrg('schools', f.school);
   const [r] = await pool.execute(
     `UPDATE students SET first_name=?, last_name=?, school=?, school_year=?, entry_date=?, grade=?, status=?, email=?, phone=?, careers=?, hobbies=?, notes=?,
      updated_at=NOW(), updated_by=? WHERE id=?`,
@@ -269,6 +294,8 @@ app.delete('/api/students/:id', auth, ready, admin, wrap(async (req, res) => {
   res.json({ ok: true });
 }));
 
+// A school or company named on a record is added to its directory if it is not there yet.
+const ensureOrg = (table, name) => (name ? pool.execute(`INSERT IGNORE INTO ${table} (name) VALUES (?)`, [name]) : null);
 const touch = (id, userId) => pool.execute('UPDATE students SET updated_at = NOW(), updated_by = ? WHERE id = ?', [userId, id]);
 const studentExists = async (id) => (await pool.execute('SELECT id FROM students WHERE id = ?', [id]))[0].length > 0;
 
@@ -277,6 +304,7 @@ app.post('/api/students/:id/internships', auth, ready, wrap(async (req, res) => 
   const company = str(req.body.company, 200);
   if (!company) return res.status(400).json({ error: 'Enter the company name.' });
   if (!(await studentExists(id))) return res.status(404).json({ error: 'That student record no longer exists.' });
+  await ensureOrg('companies', company);
   await pool.execute('INSERT INTO internships (student_id, company, role, start_date, end_date, notes) VALUES (?, ?, ?, ?, ?, ?)',
     [id, company, str(req.body.role, 200), dateOrNull(req.body.start), dateOrNull(req.body.end), str(req.body.notes, 5000)]);
   await touch(id, req.user.id);
@@ -308,6 +336,74 @@ app.delete('/api/checkins/:id', auth, ready, wrap(async (req, res) => {
   if (rows.length) await touch(rows[0].student_id, req.user.id);
   res.json({ ok: true });
 }));
+
+/* ---------- schools and companies ---------- */
+const ORGS = {
+  schools: { one: 'school', refTable: 'students', refCol: 'school', refWord: 'student record' },
+  companies: { one: 'company', refTable: 'internships', refCol: 'company', refWord: 'internship' },
+};
+function orgFields(b) {
+  const f = { name: str(b.name, 200), address: str(b.address, 300), contact_name: str(b.contactName, 120),
+    contact_email: str(b.contactEmail, 190), contact_phone: str(b.contactPhone, 40), notes: str(b.notes, 5000) };
+  if (!f.name) return { error: 'Enter a name.' };
+  if (f.contact_email && !validEmail(f.contact_email)) return { error: 'That contact email does not look right.' };
+  return { f };
+}
+app.get('/api/directory', auth, ready, wrap(async (req, res) => {
+  const out = {};
+  for (const [table, o] of Object.entries(ORGS)) {
+    const [rows] = await pool.query(
+      `SELECT d.*, (SELECT COUNT(*) FROM ${o.refTable} r WHERE r.${o.refCol} = d.name) AS uses FROM ${table} d ORDER BY d.name`);
+    out[table] = rows.map((d) => ({ id: d.id, name: d.name, address: d.address, contactName: d.contact_name, contactEmail: d.contact_email,
+      contactPhone: d.contact_phone, notes: d.notes || '', uses: Number(d.uses) }));
+  }
+  res.json(out);
+}));
+for (const [table, o] of Object.entries(ORGS)) {
+  app.post(`/api/${table}`, auth, ready, wrap(async (req, res) => {
+    const { f, error } = orgFields(req.body);
+    if (error) return res.status(400).json({ error });
+    try {
+      await pool.execute(`INSERT INTO ${table} (name, address, contact_name, contact_email, contact_phone, notes) VALUES (?, ?, ?, ?, ?, ?)`,
+        [f.name, f.address, f.contact_name, f.contact_email, f.contact_phone, f.notes]);
+    } catch (e) {
+      if (e.code === 'ER_DUP_ENTRY') return res.status(400).json({ error: `A ${o.one} with that name is already on the list.` });
+      throw e;
+    }
+    res.json({ ok: true });
+  }));
+  app.put(`/api/${table}/:id`, auth, ready, wrap(async (req, res) => {
+    const { f, error } = orgFields(req.body);
+    if (error) return res.status(400).json({ error });
+    const id = Number(req.params.id) || 0;
+    const conn = await pool.getConnection();
+    try {
+      await conn.beginTransaction();
+      const [rows] = await conn.execute(`SELECT name FROM ${table} WHERE id = ? FOR UPDATE`, [id]);
+      if (!rows.length) { await conn.rollback(); return res.status(404).json({ error: `That ${o.one} is no longer on the list.` }); }
+      await conn.execute(`UPDATE ${table} SET name=?, address=?, contact_name=?, contact_email=?, contact_phone=?, notes=? WHERE id=?`,
+        [f.name, f.address, f.contact_name, f.contact_email, f.contact_phone, f.notes, id]);
+      // A rename follows through to every record that used the old name.
+      if (rows[0].name !== f.name) await conn.execute(`UPDATE ${o.refTable} SET ${o.refCol} = ? WHERE ${o.refCol} = ?`, [f.name, rows[0].name]);
+      await conn.commit();
+    } catch (e) {
+      await conn.rollback();
+      if (e.code === 'ER_DUP_ENTRY') return res.status(400).json({ error: `A ${o.one} with that name is already on the list.` });
+      throw e;
+    } finally { conn.release(); }
+    res.json({ ok: true });
+  }));
+  app.delete(`/api/${table}/:id`, auth, ready, admin, wrap(async (req, res) => {
+    const id = Number(req.params.id) || 0;
+    const [rows] = await pool.execute(`SELECT name FROM ${table} WHERE id = ?`, [id]);
+    if (rows.length) {
+      const [[{ n }]] = await pool.execute(`SELECT COUNT(*) AS n FROM ${o.refTable} WHERE ${o.refCol} = ?`, [rows[0].name]);
+      if (n) return res.status(400).json({ error: `${n} ${o.refWord}${n === 1 ? ' uses' : 's use'} this ${o.one}. Change those first, then delete it.` });
+      await pool.execute(`DELETE FROM ${table} WHERE id = ?`, [id]);
+    }
+    res.json({ ok: true });
+  }));
+}
 
 /* ---------- staff accounts (admins only) ---------- */
 app.get('/api/users', auth, ready, admin, wrap(async (req, res) => {

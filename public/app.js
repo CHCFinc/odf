@@ -20,6 +20,7 @@ const syLabel = (y) => y + '-' + String((y + 1) % 100).padStart(2, '0');
 const ord = (n) => n + 'th';
 const DOING = ['In high school', 'In college', 'Trade or certificate program', 'College and working', 'Working full time', 'Working part time', 'Military', 'Looking for work', 'Other', 'Could not reach'];
 
+let dir = { schools: [], companies: [] }, tab = 'students', report = null, schoolPick = null;
 let me = null, students = [], loaded = false, openId = null, openRef = null, editingId = null, panel = null, lastLoad = 0;
 
 async function api(method, url, body) {
@@ -37,7 +38,7 @@ async function api(method, url, body) {
 /* ---------- views ---------- */
 function closeDialogs() { for (const d of document.querySelectorAll('dialog[open]')) d.close(); }
 function showLogin() {
-  me = null; students = []; loaded = false; closeDialogs();
+  me = null; students = []; dir = { schools: [], companies: [] }; loaded = false; closeDialogs();
   $('view-app').hidden = true; $('view-login').hidden = false; $('l-pass').value = ''; $('l-email').focus();
 }
 function showApp() {
@@ -100,7 +101,8 @@ function setState(title, body) { const n = $('state'); n.replaceChildren(el('str
 async function load() {
   lastLoad = Date.now();
   try {
-    students = (await api('GET', '/api/students')).students; loaded = true; render();
+    const [a, b] = await Promise.all([api('GET', '/api/students'), api('GET', '/api/directory')]);
+    students = a.students; dir = b; loaded = true; render(); renderTab();
     if (openId) { const s = students.find((x) => x.id === openId); if (!s || JSON.stringify(s) !== JSON.stringify(openRef)) renderDetail(); }
   } catch (err) {
     if (me && !loaded) { $('tablebox').hidden = true; setState('Students did not load', err.message); }
@@ -152,6 +154,21 @@ function render() {
   }));
 }
 
+/* ---------- school / company picker: choose from the directory, or add a new name ---------- */
+function orgPicker(kind, current, id, label, required) {
+  const one = kind === 'schools' ? 'school' : 'company';
+  const names = dir[kind].map((d) => d.name);
+  if (current && !names.includes(current)) names.push(current);
+  const fresh = el('input', { id: id + '-new', autocomplete: 'off', maxlength: 200, placeholder: 'New ' + one + ' name', 'aria-label': 'New ' + one + ' name', hidden: true });
+  const sel = el('select', { id, required },
+    el('option', { value: '', text: required ? 'Choose a ' + one : 'Not recorded' }),
+    names.map((n) => el('option', { value: n, text: n })),
+    el('option', { value: '__new', text: 'Add a new ' + one + '\u2026' }));
+  sel.value = current || '';
+  sel.addEventListener('change', () => { fresh.hidden = sel.value !== '__new'; fresh.required = !fresh.hidden; if (!fresh.hidden) fresh.focus(); });
+  return { node: el('div', { class: 'picker' }, el('label', {}, label, sel), fresh), value: () => (sel.value === '__new' ? fresh.value.trim() : sel.value) };
+}
+
 /* ---------- add / edit student ---------- */
 const yearSel = $('f-year');
 for (let y = curSY + 1; y >= curSY - 30; y--) yearSel.append(el('option', { value: syLabel(y), text: syLabel(y) }));
@@ -159,7 +176,8 @@ function openForm(s) {
   editingId = s ? s.id : null;
   $('form-title').textContent = s ? 'Edit ' + fullName(s) : 'Add student';
   $('form-err').textContent = '';
-  $('f-first').value = s ? s.firstName : ''; $('f-last').value = s ? s.lastName : ''; $('f-school').value = s ? s.school : '';
+  $('f-first').value = s ? s.firstName : ''; $('f-last').value = s ? s.lastName : '';
+  schoolPick = orgPicker('schools', s ? s.school : '', 'f-school', 'School', false); $('f-school-box').replaceChildren(schoolPick.node);
   const y = s && s.schoolYear ? s.schoolYear : syLabel(curSY);
   if (![...yearSel.options].some((o) => o.value === y)) yearSel.append(el('option', { value: y, text: y }));
   yearSel.value = y;
@@ -173,7 +191,7 @@ $('form-cancel').addEventListener('click', () => $('dlg-form').close());
 $('student-form').addEventListener('submit', async (e) => {
   e.preventDefault();
   const v = (id) => $(id).value.trim();
-  const data = { firstName: v('f-first'), lastName: v('f-last'), school: v('f-school'), schoolYear: $('f-year').value, entryDate: $('f-entry').value,
+  const data = { firstName: v('f-first'), lastName: v('f-last'), school: schoolPick.value(), schoolYear: $('f-year').value, entryDate: $('f-entry').value,
     grade: $('f-grade').value, status: $('f-status').value, email: v('f-email'), phone: v('f-phone'), careers: v('f-careers'), hobbies: v('f-hobbies'), notes: v('f-notes') };
   const btn = $('form-save'); btn.disabled = true;
   try {
@@ -247,10 +265,10 @@ function inlineForm(fields, saveLabel, submit) {
   el('div', { class: 'actions' }, err, el('button', { class: 'btn', type: 'button', text: 'Cancel', onclick: () => { panel = null; renderDetail(); } }), el('button', { class: 'btn primary', type: 'submit', text: saveLabel })));
 }
 function internForm(s) {
-  const co = el('input', { id: 'i-company', required: true, autocomplete: 'off', maxlength: 200 }), ro = el('input', { id: 'i-role', autocomplete: 'off', maxlength: 200 }),
+  const co = orgPicker('companies', '', 'i-company', 'Company', true), ro = el('input', { id: 'i-role', autocomplete: 'off', maxlength: 200 }),
     st = el('input', { id: 'i-start', type: 'date' }), en = el('input', { id: 'i-end', type: 'date' }), no = el('textarea', { id: 'i-notes', maxlength: 5000 });
-  return inlineForm([el('label', {}, 'Company', co), el('label', {}, 'Role or department', ro), el('label', {}, 'Start date', st), el('label', {}, 'End date', en), el('label', { class: 'full' }, 'Notes', no)],
-    'Save internship', () => api('POST', '/api/students/' + s.id + '/internships', { company: co.value, role: ro.value, start: st.value, end: en.value, notes: no.value }));
+  return inlineForm([co.node, el('label', {}, 'Role or department', ro), el('label', {}, 'Start date', st), el('label', {}, 'End date', en), el('label', { class: 'full' }, 'Notes', no)],
+    'Save internship', () => api('POST', '/api/students/' + s.id + '/internships', { company: co.value(), role: ro.value, start: st.value, end: en.value, notes: no.value }));
 }
 function checkinForm(s) {
   const da = el('input', { id: 'c-date', type: 'date', required: true, value: today() }), doing = el('select', { id: 'c-doing' }, DOING.map((d) => el('option', { text: d }))),
@@ -262,16 +280,137 @@ function checkinForm(s) {
 
 /* ---------- filters and export ---------- */
 ['q', 'f-cohort', 'f-stat', 'f-due'].forEach((id) => $(id).addEventListener(id === 'q' ? 'input' : 'change', render));
-$('get-csv').addEventListener('click', () => {
+function downloadCSV(name, head, rows) {
   // A leading apostrophe stops a spreadsheet from running a cell that starts like a formula.
   const esc = (v) => { let t = String(v == null ? '' : v); if (/^[=+\-@\t\r]/.test(t)) t = "'" + t; return '"' + t.replace(/"/g, '""') + '"'; };
-  const head = ['First name', 'Last name', 'School', 'School year entered', 'Date entered', 'Grade at entry', 'Status', 'Email', 'Phone', 'Career interests', 'Hobbies', 'Internships', 'Check-ins recorded', 'Latest check-in date', 'Latest check-in', 'Where', 'Details', 'Check-in due', 'Notes'];
-  const lines = filtered().map((s) => { const l = s.checkins[0] || {}; return [s.firstName, s.lastName, s.school, s.schoolYear, s.entryDate, s.grade, s.status, s.email, s.phone, s.careers, s.hobbies,
-    s.internships.map((i) => i.company).filter(Boolean).join('; '), s.checkins.length, l.date, l.doing, l.where, l.detail, isDue(s) ? 'Yes' : 'No', s.notes].map(esc).join(','); });
-  const url = URL.createObjectURL(new Blob(['﻿' + [head.map(esc).join(','), ...lines].join('\r\n')], { type: 'text/csv' }));
-  const a = el('a', { href: url, download: 'odf-students-' + today() + '.csv' });
+  const url = URL.createObjectURL(new Blob(['\ufeff' + [head, ...rows].map((r) => r.map(esc).join(',')).join('\r\n')], { type: 'text/csv' }));
+  const a = el('a', { href: url, download: name + '-' + today() + '.csv' });
   document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+$('get-csv').addEventListener('click', () => {
+  const head = ['First name', 'Last name', 'School', 'School year entered', 'Date entered', 'Grade at entry', 'Status', 'Email', 'Phone', 'Career interests', 'Hobbies', 'Internships', 'Check-ins recorded', 'Latest check-in date', 'Latest check-in', 'Where', 'Details', 'Check-in due', 'Notes'];
+  downloadCSV('odf-students', head, filtered().map((s) => { const l = s.checkins[0] || {}; return [s.firstName, s.lastName, s.school, s.schoolYear, s.entryDate, s.grade, s.status, s.email, s.phone, s.careers, s.hobbies,
+    s.internships.map((i) => i.company).filter(Boolean).join('; '), s.checkins.length, l.date, l.doing, l.where, l.detail, isDue(s) ? 'Yes' : 'No', s.notes]; }));
 });
+
+/* ---------- tabs ---------- */
+const TABS = ['students', 'schools', 'companies', 'reports'];
+function renderTab() {
+  for (const t of TABS) $('tab-' + t).hidden = t !== tab;
+  for (const b of document.querySelectorAll('.tab')) { if (b.dataset.tab === tab) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current'); }
+  if (tab === 'schools' || tab === 'companies') renderOrgs(tab);
+  if (tab === 'reports') renderReport();
+}
+for (const b of document.querySelectorAll('.tab')) b.addEventListener('click', () => { tab = b.dataset.tab; renderTab(); });
+
+/* ---------- schools and companies ---------- */
+let orgKind = 'schools', orgId = null;
+const orgWord = (k) => (k === 'schools' ? 'school' : 'company');
+function renderOrgs(kind) {
+  const list = dir[kind];
+  $(kind + '-empty').hidden = !loaded || list.length > 0; $(kind + '-box').hidden = !list.length;
+  $(kind + '-rows').replaceChildren(...list.map((d) => el('tr', {},
+    el('td', {}, el('button', { class: 'name', type: 'button', text: d.name, onclick: () => openOrg(kind, d) }), d.notes ? el('div', { class: 'sub', text: d.notes }) : null),
+    el('td', { text: d.address }), el('td', { text: d.contactName }),
+    el('td', {}, d.contactPhone, d.contactEmail ? el('div', { class: d.contactPhone ? 'sub' : '', text: d.contactEmail }) : null),
+    el('td', { text: d.uses }))));
+}
+function openOrg(kind, d) {
+  orgKind = kind; orgId = d ? d.id : null;
+  $('org-title').textContent = d ? 'Edit ' + d.name : 'Add ' + orgWord(kind);
+  $('org-err').textContent = '';
+  $('o-name').value = d ? d.name : ''; $('o-address').value = d ? d.address : ''; $('o-contact').value = d ? d.contactName : '';
+  $('o-phone').value = d ? d.contactPhone : ''; $('o-email').value = d ? d.contactEmail : ''; $('o-notes').value = d ? d.notes : '';
+  $('org-delete').replaceChildren(d && me.role === 'admin' ? confirmBtn('Delete this ' + orgWord(kind), async () => {
+    try { await api('DELETE', '/api/' + kind + '/' + d.id); $('dlg-org').close(); await load(); } catch (err) { $('org-err').textContent = err.message; }
+  }) : '');
+  $('dlg-org').showModal(); $('o-name').focus();
+}
+$('add-schools').addEventListener('click', () => openOrg('schools', null));
+$('add-companies').addEventListener('click', () => openOrg('companies', null));
+$('org-cancel').addEventListener('click', () => $('dlg-org').close());
+$('org-form').addEventListener('submit', async (e) => {
+  e.preventDefault(); $('org-err').textContent = ''; $('org-save').disabled = true;
+  const body = { name: $('o-name').value, address: $('o-address').value, contactName: $('o-contact').value, contactPhone: $('o-phone').value, contactEmail: $('o-email').value, notes: $('o-notes').value };
+  try {
+    if (orgId) await api('PUT', '/api/' + orgKind + '/' + orgId, body); else await api('POST', '/api/' + orgKind, body);
+    $('dlg-org').close(); await load();
+  } catch (err) { $('org-err').textContent = err.message; }
+  $('org-save').disabled = false;
+});
+
+/* ---------- reports ---------- */
+const REPORTS = { enrollment: 'Enrollment', outcomes: 'Alumni outcomes', internships: 'Internship placements', due: 'Check-ins due' };
+function fillSelect(sel, allLabel, values) {
+  const keep = sel.value;
+  sel.replaceChildren(el('option', { value: '', text: allLabel }), ...values.map((v) => el('option', { value: v, text: v })));
+  sel.value = values.includes(keep) ? keep : '';
+}
+const countBy = (items, key) => { const m = new Map(); for (const i of items) { const k = key(i); m.set(k, (m.get(k) || 0) + 1); } return m; };
+const pct = (n, d) => (d ? Math.round((n / d) * 100) + '%' : '');
+function rTable(title, head, rows, opts = {}) {
+  const numFrom = opts.numFrom == null ? head.length : opts.numFrom;
+  const cell = (tag, v, i) => el(tag, { class: i >= numFrom ? 'num' : '', text: v == null ? '' : v });
+  return el('div', { class: 'rblock' }, title ? el('h3', { text: title }) : null,
+    el('div', { class: 'tablebox' + (opts.wide ? ' wide' : '') }, el('table', {},
+      el('thead', {}, el('tr', {}, head.map((h, i) => cell('th', h, i)))),
+      el('tbody', {}, rows.map((r, n) => el('tr', { class: opts.total && n === rows.length - 1 ? 'total' : '' }, r.map((v, i) => cell('td', v, i))))))));
+}
+function renderReport() {
+  const type = $('r-type').value;
+  fillSelect($('r-year'), 'All entry years', [...new Set(students.map((s) => s.schoolYear).filter(Boolean))].sort().reverse());
+  fillSelect($('r-school'), 'All schools', [...new Set(students.map((s) => s.school).filter(Boolean))].sort((a, b) => a.localeCompare(b)));
+  fillSelect($('r-company'), 'All companies', [...new Set(students.flatMap((s) => s.internships.map((i) => i.company)).filter(Boolean))].sort((a, b) => a.localeCompare(b)));
+  $('r-company').hidden = type !== 'internships'; $('r-status').hidden = type !== 'enrollment';
+  const year = $('r-year').value, school = $('r-school').value, company = $('r-company').value, status = type === 'enrollment' ? $('r-status').value : '';
+  const base = students.filter((s) => (!year || s.schoolYear === year) && (!school || s.school === school) && (!status || s.status === status));
+  const scope = [year ? 'Entered ' + year : 'All entry years', school || 'All schools', type === 'internships' && company ? company : null, status || null].filter(Boolean).join(' \u00b7 ');
+  const blocks = [];
+  let head = [], rows = [], lead = '';
+
+  if (type === 'enrollment') {
+    lead = base.length + (base.length === 1 ? ' student' : ' students');
+    const years = [...new Set(base.map((s) => s.schoolYear))].sort().reverse();
+    const yr = years.map((y) => { const g = base.filter((s) => s.schoolYear === y); return [y, g.length, ...['Enrolled', 'Completed', 'Left early'].map((t) => g.filter((s) => s.status === t).length)]; });
+    yr.push(['Total', base.length, ...['Enrolled', 'Completed', 'Left early'].map((t) => base.filter((s) => s.status === t).length)]);
+    const bySchool = [...countBy(base, (s) => s.school || 'School not recorded')].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+    blocks.push(el('div', { class: 'pair' },
+      rTable('By school year entered', ['School year', 'Students', 'Enrolled', 'Completed', 'Left early'], yr, { numFrom: 1, total: true }),
+      rTable('By school', ['School', 'Students'], bySchool, { numFrom: 1 })));
+    head = ['Student', 'School', 'Entered', 'Grade at entry', 'Status', 'Career interests'];
+    rows = base.map((s) => [fullName(s), s.school, s.schoolYear, s.grade, s.status, s.careers]);
+    blocks.push(rTable('Students', head, rows, { wide: true }));
+  } else if (type === 'outcomes') {
+    const past = base.filter((s) => s.status !== 'Enrolled'), reached = past.filter((s) => s.checkins.length);
+    lead = past.length + ' past ' + (past.length === 1 ? 'student' : 'students') + ', ' + reached.length + ' with a check-in on record';
+    const by = [...countBy(past, (s) => (s.checkins[0] ? s.checkins[0].doing : 'No check-in yet'))].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+    blocks.push(rTable('What past students are doing now (latest check-in)', ['Outcome', 'Students', 'Share'], by.map(([k, n]) => [k, n, pct(n, past.length)]), { numFrom: 1 }));
+    head = ['Student', 'School', 'Entered', 'Status', 'Latest check-in', 'Doing now', 'Where', 'Details'];
+    rows = past.map((s) => { const l = s.checkins[0] || {}; return [fullName(s), s.school, s.schoolYear, s.status, fmtDate(l.date), l.doing || 'No check-in yet', l.where, l.detail]; });
+    blocks.push(rTable('Past students', head, rows, { wide: true }));
+  } else if (type === 'internships') {
+    const list = base.flatMap((s) => s.internships.filter((i) => !company || i.company === company).map((i) => ({ s, i }))).sort((a, b) => (b.i.start || '').localeCompare(a.i.start || ''));
+    lead = list.length + (list.length === 1 ? ' placement' : ' placements') + ' for ' + new Set(list.map((x) => x.s.id)).size + ' students';
+    const by = [...countBy(list, (x) => x.i.company || 'Company not recorded')].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+    blocks.push(rTable('By company', ['Company', 'Placements', 'Students'], by.map(([k, n]) => [k, n, new Set(list.filter((x) => (x.i.company || 'Company not recorded') === k).map((x) => x.s.id)).size]), { numFrom: 1 }));
+    head = ['Student', 'School', 'Entered', 'Company', 'Role', 'Start', 'End'];
+    rows = list.map(({ s, i }) => [fullName(s), s.school, s.schoolYear, i.company, i.role, fmtDate(i.start), fmtDate(i.end)]);
+    blocks.push(rTable('Placements', head, rows, { wide: true }));
+  } else {
+    const due = base.filter(isDue);
+    lead = due.length + ' past ' + (due.length === 1 ? 'student has' : 'students have') + ' no check-in in the last 12 months';
+    head = ['Student', 'School', 'Entered', 'Status', 'Last check-in', 'Email', 'Phone'];
+    rows = due.map((s) => [fullName(s), s.school, s.schoolYear, s.status, s.checkins[0] ? fmtDate(s.checkins[0].date) : 'Never', s.email, s.phone]);
+    blocks.push(rTable('Students to contact', head, rows, { wide: true }));
+  }
+  report = { name: 'odf-' + type, head, rows };
+  $('report').replaceChildren(
+    el('div', {}, el('h2', { text: 'ODF ' + REPORTS[type].toLowerCase() + ' report' }), el('p', { class: 'sub', text: scope + ' \u00b7 ' + lead + ' \u00b7 as of ' + fmtDate(today()) })),
+    ...(rows.length ? blocks : [el('div', { class: 'note' }, el('strong', { text: 'Nothing to report' }), 'No records match these filters yet.')]));
+}
+['r-type', 'r-year', 'r-school', 'r-company', 'r-status'].forEach((id) => $(id).addEventListener('change', renderReport));
+$('r-csv').addEventListener('click', () => { if (report) downloadCSV(report.name, report.head, report.rows); });
+$('r-print').addEventListener('click', () => window.print());
 
 /* ---------- staff accounts ---------- */
 async function loadStaff() {

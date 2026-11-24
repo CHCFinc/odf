@@ -1,6 +1,6 @@
 # ODF Student Tracker
 
-Tracks students in CHCF's Opening the Doors to the Future (ODF) program: intake details, internships, and a yearly check-in after they finish. Staff sign in with an email and password; there is no public sign-up.
+Tracks students in CHCF's Opening the Doors to the Future (ODF) program: intake details, internships, and a yearly check-in after they finish. It also keeps a directory of partner schools and host companies with a contact at each, and produces four reports (enrollment, alumni outcomes, internship placements, check-ins due) that can be filtered, printed or downloaded as CSV. Staff sign in with an email and password; there is no public sign-up.
 
 Built for GoDaddy Node.js Hosting: a Node.js 22 Express app with a managed MySQL database.
 
