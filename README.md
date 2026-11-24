@@ -4,6 +4,8 @@ Tracks students in CHCF's Opening the Doors to the Future (ODF) program: intake 
 
 Built for GoDaddy Node.js Hosting: a Node.js 22 Express app with a managed MySQL database.
 
+Each student record also holds a date of birth, home address, parent and emergency contacts, demographics, and allergy or medical notes, and all staff accounts can see them. Social Security numbers are deliberately not stored, and the CSV import skips any such column.
+
 ## Deploy on GoDaddy Node.js Hosting
 
 1. Create a Node.js app in GoDaddy and connect this repository (or upload a zip of it without `node_modules`).

@@ -95,6 +95,7 @@ const gradeNow = (s) => {
   return 'HS class of ' + (y + 13 - g) + ' (est.)';
 };
 const fullName = (s) => ((s.firstName || '') + ' ' + (s.lastName || '')).trim() || 'Unnamed student';
+const ageOf = (dob) => { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(dob || ''); if (!m) return 0; const t = new Date(); let a = t.getFullYear() - +m[1]; if (t.getMonth() + 1 < +m[2] || (t.getMonth() + 1 === +m[2] && t.getDate() < +m[3])) a--; return a > 0 && a < 120 ? a : 0; };
 const pill = (s) => el('span', { class: 'pill p-' + (s === 'Left early' ? 'Left' : s), text: s || 'Enrolled' });
 function setState(title, body) { const n = $('state'); n.replaceChildren(el('strong', { text: title }), body || ''); n.hidden = false; }
 
@@ -172,27 +173,30 @@ function orgPicker(kind, current, id, label, required) {
 /* ---------- add / edit student ---------- */
 const yearSel = $('f-year');
 for (let y = curSY + 1; y >= curSY - 30; y--) yearSel.append(el('option', { value: syLabel(y), text: syLabel(y) }));
+// form field id -> student property
+const FORM_FIELDS = { 'f-first': 'firstName', 'f-middle': 'middleName', 'f-last': 'lastName', 'f-dob': 'dob', 'f-email': 'email', 'f-phone': 'phone',
+  'f-entry': 'entryDate', 'f-grade': 'grade', 'f-status': 'status', 'f-papers': 'workingPapers', 'f-college': 'collegeAccepted', 'f-careers': 'careers', 'f-hobbies': 'hobbies',
+  'f-street': 'street', 'f-apt': 'apt', 'f-city': 'city', 'f-state': 'state', 'f-zip': 'zip', 'f-nycha': 'nycha',
+  'f-pname': 'parentName', 'f-pemail': 'parentEmail', 'f-pphone': 'parentPhone', 'f-pphone2': 'parentPhone2', 'f-ename': 'emergencyName', 'f-ephone': 'emergencyPhone',
+  'f-gender': 'gender', 'f-orient': 'sexualOrientation', 'f-ethnicity': 'ethnicity', 'f-race': 'race', 'f-medical': 'medical', 'f-notes': 'notes' };
 function openForm(s) {
   editingId = s ? s.id : null;
   $('form-title').textContent = s ? 'Edit ' + fullName(s) : 'Add student';
   $('form-err').textContent = '';
-  $('f-first').value = s ? s.firstName : ''; $('f-last').value = s ? s.lastName : '';
+  for (const [id, key] of Object.entries(FORM_FIELDS)) $(id).value = s ? (s[key] || '') : '';
+  if (!s) $('f-status').value = 'Enrolled';
   schoolPick = orgPicker('schools', s ? s.school : '', 'f-school', 'School', false); $('f-school-box').replaceChildren(schoolPick.node);
   const y = s && s.schoolYear ? s.schoolYear : syLabel(curSY);
   if (![...yearSel.options].some((o) => o.value === y)) yearSel.append(el('option', { value: y, text: y }));
   yearSel.value = y;
-  $('f-entry').value = s ? s.entryDate : ''; $('f-grade').value = s ? s.grade : ''; $('f-status').value = s ? s.status : 'Enrolled';
-  $('f-email').value = s ? s.email : ''; $('f-phone').value = s ? s.phone : ''; $('f-careers').value = s ? s.careers : '';
-  $('f-hobbies').value = s ? s.hobbies : ''; $('f-notes').value = s ? s.notes : '';
   $('dlg-form').showModal(); $('f-first').focus();
 }
 $('add-student').addEventListener('click', () => openForm(null));
 $('form-cancel').addEventListener('click', () => $('dlg-form').close());
 $('student-form').addEventListener('submit', async (e) => {
   e.preventDefault();
-  const v = (id) => $(id).value.trim();
-  const data = { firstName: v('f-first'), lastName: v('f-last'), school: schoolPick.value(), schoolYear: $('f-year').value, entryDate: $('f-entry').value,
-    grade: $('f-grade').value, status: $('f-status').value, email: v('f-email'), phone: v('f-phone'), careers: v('f-careers'), hobbies: v('f-hobbies'), notes: v('f-notes') };
+  const data = { school: schoolPick.value(), schoolYear: $('f-year').value };
+  for (const [id, key] of Object.entries(FORM_FIELDS)) data[key] = $(id).value.trim();
   const btn = $('form-save'); btn.disabled = true;
   try {
     if (editingId) await api('PUT', '/api/students/' + editingId, data); else await api('POST', '/api/students', data);
@@ -227,8 +231,17 @@ function renderDetail() {
     el('div', { class: 'facts' },
       fact('School', s.school), fact('Entered ODF', [s.schoolYear, fmtDate(s.entryDate)].filter(Boolean).join(' · ')),
       fact('Grade', s.grade ? (parseInt(s.grade, 10) ? ord(s.grade) + ' at entry' : s.grade) + (gn ? ' · ' + gn : '') : ''),
-      fact('Email', s.email), fact('Phone', s.phone), fact('Hobbies', s.hobbies),
-      fact('Initial career interests', s.careers, true), s.notes ? fact('Notes', s.notes, true) : null),
+      fact('Email', s.email), fact('Phone', s.phone), fact('Date of birth', fmtDate(s.dob) + (ageOf(s.dob) ? ' · age ' + ageOf(s.dob) : '')),
+      fact('Working papers (I-9)', s.workingPapers), fact('College accepted to', s.collegeAccepted), fact('Hobbies', s.hobbies),
+      fact('Initial career interests', s.careers, true),
+      el('h3', { text: 'Home address' }),
+      fact('Address', [s.street, s.apt].filter(Boolean).join(', ')), fact('City, state, zip', [[s.city, s.state].filter(Boolean).join(', '), s.zip].filter(Boolean).join(' ')), fact('NYCHA', s.nycha),
+      el('h3', { text: 'Parent and emergency contacts' }),
+      fact('Parent or guardian', s.parentName), fact('Parent email', s.parentEmail), fact('Parent phone', [s.parentPhone, s.parentPhone2].filter(Boolean).join(' · ')),
+      fact('Emergency contact', s.emergencyName), fact('Emergency phone', s.emergencyPhone),
+      el('h3', { text: 'Demographics and health' }),
+      fact('Gender', s.gender), fact('Sexual orientation', s.sexualOrientation), fact('Ethnicity', s.ethnicity), fact('Race', s.race),
+      fact('Allergies and medical notes', s.medical, true), s.notes ? fact('Notes', s.notes, true) : null),
   ];
 
   kids.push(el('section', { class: 'block' },
@@ -288,17 +301,35 @@ function downloadCSV(name, head, rows) {
   document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 $('get-csv').addEventListener('click', () => {
-  const head = ['First name', 'Last name', 'School', 'School year entered', 'Date entered', 'Grade at entry', 'Status', 'Email', 'Phone', 'Career interests', 'Hobbies', 'Internships', 'Check-ins recorded', 'Latest check-in date', 'Latest check-in', 'Where', 'Details', 'Check-in due', 'Notes'];
-  downloadCSV('odf-students', head, filtered().map((s) => { const l = s.checkins[0] || {}; return [s.firstName, s.lastName, s.school, s.schoolYear, s.entryDate, s.grade, s.status, s.email, s.phone, s.careers, s.hobbies,
-    s.internships.map((i) => i.company).filter(Boolean).join('; '), s.checkins.length, l.date, l.doing, l.where, l.detail, isDue(s) ? 'Yes' : 'No', s.notes]; }));
+  const cols = IMPORT_COLS.filter(([k]) => !EXPORT_SKIP.includes(k));
+  const head = [...cols.map((c) => c[1]), 'Internships', 'Check-ins recorded', 'Latest check-in date', 'Latest check-in', 'Where', 'Details', 'Check-in due'];
+  downloadCSV('odf-students', head, filtered().map((s) => { const l = s.checkins[0] || {}; return [...cols.map(([k]) => s[k]),
+    s.internships.map((i) => i.company).filter(Boolean).join('; '), s.checkins.length, l.date, l.doing, l.where, l.detail, isDue(s) ? 'Yes' : 'No']; }));
 });
 
 /* ---------- import students from CSV ---------- */
 const IMPORT_COLS = [
-  ['firstName', 'First name'], ['lastName', 'Last name'], ['school', 'School'], ['schoolYear', 'School year entered'], ['entryDate', 'Date entered'],
-  ['grade', 'Grade at entry'], ['status', 'Status'], ['email', 'Email'], ['phone', 'Phone'], ['careers', 'Career interests'], ['hobbies', 'Hobbies'], ['notes', 'Notes'],
+  ['firstName', 'First name'], ['middleName', 'Middle name'], ['lastName', 'Last name'], ['school', 'School'], ['schoolYear', 'School year entered'], ['entryDate', 'Date entered'],
+  ['grade', 'Grade at entry'], ['status', 'Status'], ['email', 'Email'], ['phone', 'Phone'], ['dob', 'Date of birth'],
+  ['gender', 'Gender'], ['sexualOrientation', 'Sexual orientation'], ['ethnicity', 'Ethnicity'], ['race', 'Race'], ['medical', 'Allergies and medical'],
+  ['street', 'Street address'], ['apt', 'Apt, floor or location'], ['city', 'City'], ['state', 'State'], ['zip', 'Zip code'], ['nycha', 'NYCHA'],
+  ['workingPapers', 'Has working papers (I-9)'], ['collegeAccepted', 'College accepted'],
+  ['parentName', 'Parent name'], ['parentEmail', 'Parent email'], ['parentPhone', 'Parent phone'], ['parentPhone2', 'Parent phone 2'],
+  ['emergencyName', 'Emergency contact name'], ['emergencyPhone', 'Emergency contact phone'],
+  ['careers', 'Career interests'], ['hobbies', 'Hobbies'], ['notes', 'Notes'],
   ['company', 'Internship company'], ['role', 'Internship role'], ['internStart', 'Internship start'], ['internEnd', 'Internship end'],
+  ['companyAddress', 'Internship address'], ['companyContact', 'Internship contact name'], ['companyContactTitle', 'Internship contact job title'],
+  ['companyContactPhone', 'Internship contact phone'], ['companyContactEmail', 'Internship contact email'],
 ];
+const EXPORT_SKIP = ['company', 'role', 'internStart', 'internEnd', 'companyAddress', 'companyContact', 'companyContactTitle', 'companyContactPhone', 'companyContactEmail'];
+// Other spellings of the same headers, as they appear on the ODF intake sheet. Keys are lower-case letters and digits only.
+const IMPORT_ALIASES = { firstname: 'firstName', lastname: 'lastName', middlename: 'middleName', schoolyear: 'schoolYear', entrydate: 'entryDate', grade: 'grade', juniorsenior: 'grade',
+  phonenumber: 'phone', dateofbirth: 'dob', dob: 'dob', allergiesmedical: 'medical', aptfloorlocation: 'apt', zip: 'zip', workingpapers: 'workingPapers',
+  parentsname: 'parentName', parentphone2: 'parentPhone2', emergencycontact: 'emergencyPhone', careerinterest: 'careers',
+  company: 'company', internshiplocationname: 'company', internshipstartdate: 'internStart', internshipenddate: 'internEnd',
+  contactnameatinternshiplocation: 'companyContact', contactnameatinternshiplocationjobtitle: 'companyContactTitle',
+  contactnameatinternshiplocationphonenumber: 'companyContactPhone', contactnameatinternshiplocationemailaddress: 'companyContactEmail' };
+let importText = '';
 let importRows = [];
 function parseCSV(text) {
   const rows = []; let row = [], cell = '', q = false;
@@ -312,9 +343,9 @@ function parseCSV(text) {
     else cell += ch;
   }
   if (cell !== '' || row.length) { row.push(cell); rows.push(row); }
-  return rows.filter((r) => r.some((c) => c.trim() !== ''));
+  return rows.filter((r) => r.some((c, i) => c.trim() !== '' && !(i === 0 && /^\d+$/.test(c.trim()))));
 }
-const normKey = (h) => h.toLowerCase().replace(/[^a-z]/g, '');
+const normKey = (h) => h.toLowerCase().replace(/[^a-z0-9]/g, '');
 function toISO(v) {
   v = v.trim(); if (!v) return '';
   let iso = null, m = /^(\d{4})-(\d{1,2})-(\d{1,2})/.exec(v);
@@ -334,37 +365,41 @@ function toSchoolYear(v, entryISO) {
 }
 function toStatus(v) {
   const t = v.trim().toLowerCase();
-  if (!t || /^(completed|complete|alumni|alumnus|alumna|graduated|finished)$/.test(t)) return 'Completed';
+  if (!t) return $('import-status').value;
+  if (/^(completed|complete|alumni|alumnus|alumna|graduated|finished)$/.test(t)) return 'Completed';
   if (/^(enrolled|active|current)$/.test(t)) return 'Enrolled';
   if (/^(left early|left|withdrew|withdrawn|dropped)$/.test(t)) return 'Left early';
   return null;
 }
 function toGrade(v) {
   const t = v.trim(); if (!t) return '';
+  const words = { freshman: '9', sophomore: '10', junior: '11', senior: '12' }[t.toLowerCase()];
+  if (words) return words;
   const m = /(\d{1,2})/.exec(t);
   return m && ['8', '9', '10', '11', '12'].includes(m[1]) ? m[1] : 'Other';
 }
 function readImport(text) {
   const table = parseCSV(text);
   if (table.length < 2) return { error: 'That file has no student rows under its header row.' };
-  const want = new Map(IMPORT_COLS.map(([k, label]) => [normKey(label), k]));
-  for (const [alias, k] of [['firstname', 'firstName'], ['lastname', 'lastName'], ['schoolyear', 'schoolYear'], ['entrydate', 'entryDate'], ['grade', 'grade'], ['company', 'company'], ['careerinterest', 'careers']]) want.set(alias, k);
-  const cols = table[0].map((h) => want.get(normKey(h)) || null);
+  const want = new Map([...IMPORT_COLS.map(([k, label]) => [normKey(label), k]), ...Object.entries(IMPORT_ALIASES)]);
+  const cols = table[0].map((h) => want.get(normKey(h)) || null); // a Social Security column matches nothing here, so it is dropped
   if (!cols.includes('firstName') || !cols.includes('lastName')) return { error: 'The header row needs columns named First name and Last name. Download the template to see the layout.' };
   const have = new Set(students.map((s) => (s.firstName + '|' + s.lastName + '|' + s.schoolYear).toLowerCase()));
   const out = table.slice(1).map((r, n) => {
     const d = { row: n + 2 };
     // Files made by Download CSV put an apostrophe in front of cells that look like formulas.
-    cols.forEach((k, i) => { if (k) d[k] = (r[i] || '').trim().replace(/^'(?=[=+\-@])/, ''); });
+    cols.forEach((k, i) => { if (k && d[k] == null) d[k] = (r[i] || '').replace(/\u00a0/g, ' ').replace(/\s+/g, ' ').trim().replace(/^'(?=[=+\-@])/, '').replace(/^pending$/i, ''); });
     for (const [k] of IMPORT_COLS) if (d[k] == null) d[k] = '';
     const problems = [];
     if (!d.firstName || !d.lastName) problems.push('First or last name is missing');
-    for (const k of ['entryDate', 'internStart', 'internEnd']) { const iso = toISO(d[k]); if (iso === null) problems.push('Date "' + d[k] + '" is not readable (use 2021-09-13 or 9/13/2021)'); else d[k] = iso; }
-    const sy = toSchoolYear(d.schoolYear, d.entryDate);
+    for (const k of ['entryDate', 'dob', 'internStart', 'internEnd']) { const iso = toISO(d[k]); if (iso === null) problems.push('Date "' + d[k] + '" is not readable (use 2021-09-13 or 9/13/2021)'); else d[k] = iso; }
+    const sy = toSchoolYear(d.schoolYear, d.entryDate) || (!d.schoolYear && $('import-year').value) || null;
     if (!sy) problems.push(d.schoolYear ? 'School year "' + d.schoolYear + '" is not readable (use 2021-22)' : 'School year entered is missing'); else d.schoolYear = sy;
     const st = toStatus(d.status);
     if (!st) problems.push('Status "' + d.status + '" is not Enrolled, Completed or Left early'); else d.status = st;
     d.grade = toGrade(d.grade);
+    d.workingPapers = ({ yes: 'Yes', y: 'Yes', no: 'No', n: 'No', pending: 'Pending' })[d.workingPapers.toLowerCase()] || '';
+    if (d.parentEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(d.parentEmail)) problems.push('Parent email "' + d.parentEmail + '" does not look right');
     if (d.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(d.email)) problems.push('Email "' + d.email + '" does not look right');
     const key = (d.firstName + '|' + d.lastName + '|' + d.schoolYear).toLowerCase();
     d.problem = problems.join('; ');
@@ -372,7 +407,7 @@ function readImport(text) {
     if (!d.problem) have.add(key);
     return d;
   });
-  return { rows: out };
+  return { rows: out, ignored: table[0].map((h, i) => (cols[i] ? null : h.replace(/\s+/g, ' ').trim())).filter(Boolean) };
 }
 function showImport(res) {
   const box = $('import-preview'); importRows = []; $('import-go').hidden = true; $('import-err').textContent = '';
@@ -385,6 +420,7 @@ function showImport(res) {
     dup.length ? el('span', { class: 'pill p-Left', text: dup.length + ' already on record, skipped' }) : null)];
   if (bad.length) kids.push(rTable('Rows that will not be imported until fixed in the file', ['Row', 'Student', 'Problem'], bad.slice(0, 50).map((d) => [d.row, (d.firstName + ' ' + d.lastName).trim(), d.problem])),
     bad.length > 50 ? el('p', { class: 'empty', text: 'Showing the first 50 of ' + bad.length + '.' }) : null);
+  if (res.ignored.length) kids.push(el('p', { class: 'empty', text: 'Columns in the file that are not imported: ' + res.ignored.join(', ') + '.' }));
   if (importRows.length) kids.push(rTable('First rows as they will be imported', ['Student', 'School', 'Entered', 'Grade', 'Status', 'Internship'],
     importRows.slice(0, 5).map((d) => [d.firstName + ' ' + d.lastName, d.school, d.schoolYear, d.grade, d.status, d.company])));
   if (importRows.length > 1000) { kids.push(el('p', { class: 'err', text: 'This file has more than 1,000 students. Split it into smaller files.' })); importRows = []; }
@@ -392,20 +428,27 @@ function showImport(res) {
   $('import-go').hidden = !importRows.length;
   $('import-go').textContent = 'Import ' + importRows.length + (importRows.length === 1 ? ' student' : ' students');
 }
-$('open-import').addEventListener('click', () => { $('import-file').value = ''; $('import-preview').replaceChildren(); $('import-err').textContent = ''; $('import-go').hidden = true; importRows = []; $('dlg-import').showModal(); });
+$('open-import').addEventListener('click', () => { $('import-file').value = ''; $('import-preview').replaceChildren(); $('import-err').textContent = ''; $('import-go').hidden = true; importRows = []; importText = '';
+  const ys = $('import-year'), keep = ys.value; ys.replaceChildren(el('option', { value: '', text: 'Nothing: flag the row' })); for (let y = curSY + 1; y >= curSY - 30; y--) ys.append(el('option', { value: syLabel(y), text: syLabel(y) })); ys.value = keep;
+  $('dlg-import').showModal(); });
+['import-year', 'import-status'].forEach((id) => $(id).addEventListener('change', () => { if (importText) showImport(readImport(importText)); }));
+// Excel often saves CSV in its own Windows encoding rather than UTF-8; reading it as UTF-8 would garble accented names.
+function decodeCSV(buf) { try { return new TextDecoder('utf-8', { fatal: true }).decode(buf); } catch (e) { return new TextDecoder('windows-1252').decode(buf); } }
 $('import-close').addEventListener('click', () => $('dlg-import').close());
-$('import-template').addEventListener('click', () => downloadCSV('odf-import-template', IMPORT_COLS.map((c) => c[1]),
-  [['Maria', 'Example', 'Example High School', '2021-22', '2021-09-13', '11', 'Completed', 'maria@example.org', '555-0100', 'Nursing, public health', 'Soccer', 'Delete this example row', 'Example Company', 'Office intern', '2022-02-07', '2022-06-10']]));
+const TEMPLATE_ROW = { firstName: 'Maria', lastName: 'Example', school: 'Example High School', schoolYear: '2021-22', entryDate: '2021-09-13', grade: '11', status: 'Completed',
+  email: 'maria@example.org', phone: '555-0100', careers: 'Nursing, public health', hobbies: 'Soccer', notes: 'Delete this example row',
+  company: 'Example Company', role: 'Office intern', internStart: '2022-02-07', internEnd: '2022-06-10' };
+$('import-template').addEventListener('click', () => downloadCSV('odf-import-template', IMPORT_COLS.map((c) => c[1]), [IMPORT_COLS.map(([k]) => TEMPLATE_ROW[k] || '')]));
 $('import-file').addEventListener('change', async () => {
   const f = $('import-file').files[0]; if (!f) return;
   if (f.size > 2e6) { showImport({ error: 'That file is larger than 2 MB. Split it into smaller files.' }); return; }
-  try { showImport(readImport(await f.text())); } catch (e) { showImport({ error: 'That file could not be read as a CSV.' }); }
+  try { importText = decodeCSV(await f.arrayBuffer()); showImport(readImport(importText)); } catch (e) { importText = ''; showImport({ error: 'That file could not be read as a CSV.' }); }
 });
 $('import-go').addEventListener('click', async () => {
   const btn = $('import-go'); btn.disabled = true; $('import-err').textContent = '';
   try {
     const r = await api('POST', '/api/students/import', { rows: importRows });
-    await load(); importRows = []; btn.hidden = true; $('import-file').value = '';
+    await load(); importRows = []; importText = ''; btn.hidden = true; $('import-file').value = '';
     $('import-preview').replaceChildren(el('div', { class: 'note' }, el('strong', { text: r.added + (r.added === 1 ? ' student' : ' students') + ' imported' }),
       [r.skipped ? r.skipped + ' already on record and skipped. ' : '', r.problems.length ? r.problems.length + ' refused by the server: ' + r.problems.slice(0, 5).map((p) => 'row ' + p.row + ' (' + p.error + ')').join(', ') : ''].join('') || 'They are now in the Students list.'));
   } catch (err) { $('import-err').textContent = err.message; }
@@ -430,7 +473,7 @@ function renderOrgs(kind) {
   $(kind + '-empty').hidden = !loaded || list.length > 0; $(kind + '-box').hidden = !list.length;
   $(kind + '-rows').replaceChildren(...list.map((d) => el('tr', {},
     el('td', {}, el('button', { class: 'name', type: 'button', text: d.name, onclick: () => openOrg(kind, d) }), d.notes ? el('div', { class: 'sub', text: d.notes }) : null),
-    el('td', { text: d.address }), el('td', { text: d.contactName }),
+    el('td', { text: d.address }), el('td', {}, d.contactName, d.contactTitle ? el('div', { class: 'sub', text: d.contactTitle }) : null),
     el('td', {}, d.contactPhone, d.contactEmail ? el('div', { class: d.contactPhone ? 'sub' : '', text: d.contactEmail }) : null),
     el('td', { text: d.uses }))));
 }
@@ -438,7 +481,7 @@ function openOrg(kind, d) {
   orgKind = kind; orgId = d ? d.id : null;
   $('org-title').textContent = d ? 'Edit ' + d.name : 'Add ' + orgWord(kind);
   $('org-err').textContent = '';
-  $('o-name').value = d ? d.name : ''; $('o-address').value = d ? d.address : ''; $('o-contact').value = d ? d.contactName : '';
+  $('o-name').value = d ? d.name : ''; $('o-address').value = d ? d.address : ''; $('o-contact').value = d ? d.contactName : ''; $('o-title').value = d ? d.contactTitle : '';
   $('o-phone').value = d ? d.contactPhone : ''; $('o-email').value = d ? d.contactEmail : ''; $('o-notes').value = d ? d.notes : '';
   $('org-delete').replaceChildren(d && me.role === 'admin' ? confirmBtn('Delete this ' + orgWord(kind), async () => {
     try { await api('DELETE', '/api/' + kind + '/' + d.id); $('dlg-org').close(); await load(); } catch (err) { $('org-err').textContent = err.message; }
@@ -450,7 +493,7 @@ $('add-companies').addEventListener('click', () => openOrg('companies', null));
 $('org-cancel').addEventListener('click', () => $('dlg-org').close());
 $('org-form').addEventListener('submit', async (e) => {
   e.preventDefault(); $('org-err').textContent = ''; $('org-save').disabled = true;
-  const body = { name: $('o-name').value, address: $('o-address').value, contactName: $('o-contact').value, contactPhone: $('o-phone').value, contactEmail: $('o-email').value, notes: $('o-notes').value };
+  const body = { name: $('o-name').value, address: $('o-address').value, contactName: $('o-contact').value, contactTitle: $('o-title').value, contactPhone: $('o-phone').value, contactEmail: $('o-email').value, notes: $('o-notes').value };
   try {
     if (orgId) await api('PUT', '/api/' + orgKind + '/' + orgId, body); else await api('POST', '/api/' + orgKind, body);
     $('dlg-org').close(); await load();
@@ -459,7 +502,7 @@ $('org-form').addEventListener('submit', async (e) => {
 });
 
 /* ---------- reports ---------- */
-const REPORTS = { enrollment: 'Enrollment', outcomes: 'Alumni outcomes', internships: 'Internship placements', due: 'Check-ins due' };
+const REPORTS = { enrollment: 'Enrollment', outcomes: 'Alumni outcomes', internships: 'Internship placements', due: 'Check-ins due', demographics: 'Demographics' };
 function fillSelect(sel, allLabel, values) {
   const keep = sel.value;
   sel.replaceChildren(el('option', { value: '', text: allLabel }), ...values.map((v) => el('option', { value: v, text: v })));
@@ -480,8 +523,8 @@ function renderReport() {
   fillSelect($('r-year'), 'All entry years', [...new Set(students.map((s) => s.schoolYear).filter(Boolean))].sort().reverse());
   fillSelect($('r-school'), 'All schools', [...new Set(students.map((s) => s.school).filter(Boolean))].sort((a, b) => a.localeCompare(b)));
   fillSelect($('r-company'), 'All companies', [...new Set(students.flatMap((s) => s.internships.map((i) => i.company)).filter(Boolean))].sort((a, b) => a.localeCompare(b)));
-  $('r-company').hidden = type !== 'internships'; $('r-status').hidden = type !== 'enrollment';
-  const year = $('r-year').value, school = $('r-school').value, company = $('r-company').value, status = type === 'enrollment' ? $('r-status').value : '';
+  $('r-company').hidden = type !== 'internships'; $('r-status').hidden = type !== 'enrollment' && type !== 'demographics';
+  const year = $('r-year').value, school = $('r-school').value, company = $('r-company').value, status = type === 'enrollment' || type === 'demographics' ? $('r-status').value : '';
   const base = students.filter((s) => (!year || s.schoolYear === year) && (!school || s.school === school) && (!status || s.status === status));
   const scope = [year ? 'Entered ' + year : 'All entry years', school || 'All schools', type === 'internships' && company ? company : null, status || null].filter(Boolean).join(' \u00b7 ');
   const blocks = [];
@@ -515,6 +558,19 @@ function renderReport() {
     head = ['Student', 'School', 'Entered', 'Company', 'Role', 'Start', 'End'];
     rows = list.map(({ s, i }) => [fullName(s), s.school, s.schoolYear, i.company, i.role, fmtDate(i.start), fmtDate(i.end)]);
     blocks.push(rTable('Placements', head, rows, { wide: true }));
+  } else if (type === 'demographics') {
+    // Totals only: this report never lists a student by name.
+    lead = base.length + (base.length === 1 ? ' student' : ' students');
+    const groups = [['Gender', (s) => s.gender], ['Ethnicity', (s) => s.ethnicity], ['Race', (s) => s.race], ['Sexual orientation', (s) => s.sexualOrientation],
+      ['Grade at entry', (s) => (parseInt(s.grade, 10) ? ord(s.grade) : s.grade)], ['Lives in NYCHA housing', (s) => (!s.nycha ? '' : /^(no|n)\b/i.test(s.nycha) ? 'No' : /^maybe/i.test(s.nycha) ? 'Unsure' : 'Yes')],
+      ['Age today', (s) => (ageOf(s.dob) ? String(ageOf(s.dob)) : '')], ['Home zip code', (s) => s.zip]];
+    head = ['Category', 'Answer', 'Students', 'Share'];
+    const tables = groups.map(([title, get]) => {
+      const by = [...countBy(base, (s) => get(s) || 'Not recorded')].sort((a, b) => (a[0] === 'Not recorded') - (b[0] === 'Not recorded') || b[1] - a[1] || a[0].localeCompare(b[0]));
+      for (const [k, n] of by) rows.push([title, k, n, pct(n, base.length)]);
+      return rTable(title, [title, 'Students', 'Share'], by.map(([k, n]) => [k, n, pct(n, base.length)]), { numFrom: 1 });
+    });
+    for (let i = 0; i < tables.length; i += 2) blocks.push(el('div', { class: 'pair' }, tables[i], tables[i + 1]));
   } else {
     const due = base.filter(isDue);
     lead = due.length + ' past ' + (due.length === 1 ? 'student has' : 'students have') + ' no check-in in the last 12 months';

@@ -136,3 +136,7 @@ section.block{display:flex;flex-direction:column;gap:10px}
 .filepick input{width:auto;max-width:100%}
 .counts{display:flex;gap:8px;flex-wrap:wrap}
 #import-preview table{min-width:0}
+.grid.three{grid-template-columns:repeat(3,minmax(0,1fr))}
+.grid .grid{gap:12px}
+.facts h3{grid-column:1/-1;margin-top:4px}
+@media (max-width:640px){.grid.three{grid-template-columns:1fr}}

@@ -114,6 +114,27 @@ const SCHEMA = [
   "INSERT IGNORE INTO companies (name) SELECT DISTINCT TRIM(company) FROM internships WHERE TRIM(company) <> ''",
 ];
 
+// Columns added after the first release. Existing rows keep working: every one is blank by default.
+const TXT = (n) => `VARCHAR(${n}) NOT NULL DEFAULT ''`;
+const ADDED_COLUMNS = {
+  students: {
+    middle_name: TXT(100), dob: 'DATE NULL', gender: TXT(40), sexual_orientation: TXT(60), ethnicity: TXT(60), race: TXT(80), medical: TXT(500),
+    street: TXT(200), apt: TXT(60), city: TXT(80), state: TXT(20), zip: TXT(12), nycha: TXT(120), working_papers: TXT(20), college_accepted: TXT(300),
+    parent_name: TXT(200), parent_email: TXT(190), parent_phone: TXT(120), parent_phone2: TXT(120), emergency_name: TXT(200), emergency_phone: TXT(120),
+  },
+  schools: { contact_title: TXT(120) },
+  companies: { contact_title: TXT(120) },
+};
+async function addColumns(table, cols) {
+  const [rows] = await pool.query('SELECT COLUMN_NAME AS c FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = ?', [table]);
+  const have = new Set(rows.map((r) => r.c.toLowerCase()));
+  for (const [name, def] of Object.entries(cols)) {
+    if (have.has(name)) continue;
+    // Preview and live can start together; the loser of that race sees "duplicate column", which is fine.
+    try { await pool.query(`ALTER TABLE ${table} ADD COLUMN ${name} ${def}`); } catch (e) { if (e.code !== 'ER_DUP_FIELDNAME') throw e; }
+  }
+}
+
 /* ---------- helpers ---------- */
 const str = (v, max) => (typeof v === 'string' ? v.trim().slice(0, max) : '');
 const dateOrNull = (v) => (typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v) && !Number.isNaN(Date.parse(v)) ? v : null);
@@ -228,20 +249,37 @@ app.post('/api/password', auth, wrap(async (req, res) => {
 }));
 
 /* ---------- students ---------- */
+// column: [name in requests and responses, longest value kept]
+const TEXT_COLS = {
+  first_name: ['firstName', 100], middle_name: ['middleName', 100], last_name: ['lastName', 100], school: ['school', 200],
+  school_year: ['schoolYear', 7], grade: ['grade', 10], status: ['status', 20], email: ['email', 190], phone: ['phone', 40],
+  careers: ['careers', 500], hobbies: ['hobbies', 500], notes: ['notes', 5000],
+  gender: ['gender', 40], sexual_orientation: ['sexualOrientation', 60], ethnicity: ['ethnicity', 60], race: ['race', 80], medical: ['medical', 500],
+  street: ['street', 200], apt: ['apt', 60], city: ['city', 80], state: ['state', 20], zip: ['zip', 12], nycha: ['nycha', 120],
+  working_papers: ['workingPapers', 20], college_accepted: ['collegeAccepted', 300],
+  parent_name: ['parentName', 200], parent_email: ['parentEmail', 190], parent_phone: ['parentPhone', 120], parent_phone2: ['parentPhone2', 120],
+  emergency_name: ['emergencyName', 200], emergency_phone: ['emergencyPhone', 120],
+};
+const DATE_COLS = { entry_date: 'entryDate', dob: 'dob' };
+const WORKING_PAPERS = ['', 'Yes', 'No', 'Pending'];
+
 function studentFields(b) {
-  const f = {
-    first_name: str(b.firstName, 100), last_name: str(b.lastName, 100), school: str(b.school, 200),
-    school_year: str(b.schoolYear, 7), entry_date: dateOrNull(b.entryDate), grade: str(b.grade, 10),
-    status: str(b.status, 20), email: str(b.email, 190), phone: str(b.phone, 40),
-    careers: str(b.careers, 500), hobbies: str(b.hobbies, 500), notes: str(b.notes, 5000),
-  };
+  const f = {};
+  for (const [col, [key, max]] of Object.entries(TEXT_COLS)) f[col] = str(b[key], max);
+  for (const [col, key] of Object.entries(DATE_COLS)) f[col] = dateOrNull(b[key]);
   if (!f.first_name || !f.last_name) return { error: 'First and last name are required.' };
   if (!/^\d{4}-\d{2}$/.test(f.school_year)) return { error: 'Pick the school year the student entered.' };
   if (!STATUSES.includes(f.status)) return { error: 'Pick a program status.' };
   if (!GRADES.includes(f.grade)) return { error: 'Pick a grade from the list.' };
+  if (!WORKING_PAPERS.includes(f.working_papers)) return { error: 'Pick a working papers answer from the list.' };
   if (f.email && !validEmail(f.email)) return { error: 'That student email does not look right.' };
+  if (f.parent_email && !validEmail(f.parent_email)) return { error: 'That parent email does not look right.' };
   return { f };
 }
+const insertStudent = (db, f, userId) => {
+  const cols = Object.keys(f);
+  return db.execute(`INSERT INTO students (${cols.join(', ')}, updated_by) VALUES (${cols.map(() => '?').join(', ')}, ?)`, [...cols.map((c) => f[c]), userId]);
+};
 app.get('/api/students', auth, ready, wrap(async (req, res) => {
   const [students] = await pool.query(
     `SELECT s.*, u.name AS updated_by_name FROM students s LEFT JOIN users u ON u.id = s.updated_by ORDER BY s.last_name, s.first_name`);
@@ -250,12 +288,9 @@ app.get('/api/students', auth, ready, wrap(async (req, res) => {
     `SELECT c.*, u.name AS by_name FROM checkins c LEFT JOIN users u ON u.id = c.recorded_by ORDER BY c.checkin_date DESC, c.id DESC`);
   const byId = new Map();
   const out = students.map((s) => {
-    const o = {
-      id: s.id, firstName: s.first_name, lastName: s.last_name, school: s.school, schoolYear: s.school_year,
-      entryDate: s.entry_date || '', grade: s.grade, status: s.status, email: s.email, phone: s.phone,
-      careers: s.careers, hobbies: s.hobbies, notes: s.notes || '', updatedAt: s.updated_at,
-      updatedByName: s.updated_by_name || '', internships: [], checkins: [],
-    };
+    const o = { id: s.id, updatedAt: s.updated_at, updatedByName: s.updated_by_name || '', internships: [], checkins: [] };
+    for (const [col, [key]] of Object.entries(TEXT_COLS)) o[key] = s[col] || '';
+    for (const [col, key] of Object.entries(DATE_COLS)) o[key] = s[col] || '';
     byId.set(s.id, o);
     return o;
   });
@@ -273,10 +308,7 @@ app.post('/api/students', auth, ready, wrap(async (req, res) => {
   const { f, error } = studentFields(req.body);
   if (error) return res.status(400).json({ error });
   await ensureOrg('schools', f.school);
-  const [r] = await pool.execute(
-    `INSERT INTO students (first_name, last_name, school, school_year, entry_date, grade, status, email, phone, careers, hobbies, notes, updated_by)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [f.first_name, f.last_name, f.school, f.school_year, f.entry_date, f.grade, f.status, f.email, f.phone, f.careers, f.hobbies, f.notes, req.user.id]);
+  const [r] = await insertStudent(pool, f, req.user.id);
   res.json({ id: r.insertId });
 }));
 // Bulk import from a CSV the page has already read and tidied. Each row is checked again here.
@@ -300,13 +332,13 @@ app.post('/api/students/import', auth, ready, wrap(async (req, res) => {
       if (seen.has(k)) { skipped++; continue; }
       seen.add(k);
       if (f.school) await conn.execute('INSERT IGNORE INTO schools (name) VALUES (?)', [f.school]);
-      const [r] = await conn.execute(
-        `INSERT INTO students (first_name, last_name, school, school_year, entry_date, grade, status, email, phone, careers, hobbies, notes, updated_by)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [f.first_name, f.last_name, f.school, f.school_year, f.entry_date, f.grade, f.status, f.email, f.phone, f.careers, f.hobbies, f.notes, req.user.id]);
+      const [r] = await insertStudent(conn, f, req.user.id);
       const company = str(b.company, 200);
       if (company) {
-        await conn.execute('INSERT IGNORE INTO companies (name) VALUES (?)', [company]);
+        // A company new to the directory keeps the address and contact given in the file.
+        const contactEmail = str(b.companyContactEmail, 190);
+        await conn.execute('INSERT IGNORE INTO companies (name, address, contact_name, contact_title, contact_phone, contact_email) VALUES (?, ?, ?, ?, ?, ?)',
+          [company, str(b.companyAddress, 300), str(b.companyContact, 120), str(b.companyContactTitle, 120), str(b.companyContactPhone, 40), validEmail(contactEmail) ? contactEmail : '']);
         await conn.execute('INSERT INTO internships (student_id, company, role, start_date, end_date, notes) VALUES (?, ?, ?, ?, ?, ?)',
           [r.insertId, company, str(b.role, 200), dateOrNull(b.internStart), dateOrNull(b.internEnd), '']);
       }
@@ -320,10 +352,9 @@ app.put('/api/students/:id', auth, ready, wrap(async (req, res) => {
   const { f, error } = studentFields(req.body);
   if (error) return res.status(400).json({ error });
   await ensureOrg('schools', f.school);
-  const [r] = await pool.execute(
-    `UPDATE students SET first_name=?, last_name=?, school=?, school_year=?, entry_date=?, grade=?, status=?, email=?, phone=?, careers=?, hobbies=?, notes=?,
-     updated_at=NOW(), updated_by=? WHERE id=?`,
-    [f.first_name, f.last_name, f.school, f.school_year, f.entry_date, f.grade, f.status, f.email, f.phone, f.careers, f.hobbies, f.notes, req.user.id, Number(req.params.id) || 0]);
+  const cols = Object.keys(f);
+  const [r] = await pool.execute(`UPDATE students SET ${cols.map((c) => c + ' = ?').join(', ')}, updated_at = NOW(), updated_by = ? WHERE id = ?`,
+    [...cols.map((c) => f[c]), req.user.id, Number(req.params.id) || 0]);
   if (!r.affectedRows) return res.status(404).json({ error: 'That student record no longer exists.' });
   res.json({ ok: true });
 }));
@@ -381,7 +412,7 @@ const ORGS = {
   companies: { one: 'company', refTable: 'internships', refCol: 'company', refWord: 'internship' },
 };
 function orgFields(b) {
-  const f = { name: str(b.name, 200), address: str(b.address, 300), contact_name: str(b.contactName, 120),
+  const f = { name: str(b.name, 200), address: str(b.address, 300), contact_name: str(b.contactName, 120), contact_title: str(b.contactTitle, 120),
     contact_email: str(b.contactEmail, 190), contact_phone: str(b.contactPhone, 40), notes: str(b.notes, 5000) };
   if (!f.name) return { error: 'Enter a name.' };
   if (f.contact_email && !validEmail(f.contact_email)) return { error: 'That contact email does not look right.' };
@@ -392,7 +423,7 @@ app.get('/api/directory', auth, ready, wrap(async (req, res) => {
   for (const [table, o] of Object.entries(ORGS)) {
     const [rows] = await pool.query(
       `SELECT d.*, (SELECT COUNT(*) FROM ${o.refTable} r WHERE r.${o.refCol} = d.name) AS uses FROM ${table} d ORDER BY d.name`);
-    out[table] = rows.map((d) => ({ id: d.id, name: d.name, address: d.address, contactName: d.contact_name, contactEmail: d.contact_email,
+    out[table] = rows.map((d) => ({ id: d.id, name: d.name, address: d.address, contactName: d.contact_name, contactTitle: d.contact_title || '', contactEmail: d.contact_email,
       contactPhone: d.contact_phone, notes: d.notes || '', uses: Number(d.uses) }));
   }
   res.json(out);
@@ -402,8 +433,8 @@ for (const [table, o] of Object.entries(ORGS)) {
     const { f, error } = orgFields(req.body);
     if (error) return res.status(400).json({ error });
     try {
-      await pool.execute(`INSERT INTO ${table} (name, address, contact_name, contact_email, contact_phone, notes) VALUES (?, ?, ?, ?, ?, ?)`,
-        [f.name, f.address, f.contact_name, f.contact_email, f.contact_phone, f.notes]);
+      await pool.execute(`INSERT INTO ${table} (name, address, contact_name, contact_title, contact_email, contact_phone, notes) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        [f.name, f.address, f.contact_name, f.contact_title, f.contact_email, f.contact_phone, f.notes]);
     } catch (e) {
       if (e.code === 'ER_DUP_ENTRY') return res.status(400).json({ error: `A ${o.one} with that name is already on the list.` });
       throw e;
@@ -419,8 +450,8 @@ for (const [table, o] of Object.entries(ORGS)) {
       await conn.beginTransaction();
       const [rows] = await conn.execute(`SELECT name FROM ${table} WHERE id = ? FOR UPDATE`, [id]);
       if (!rows.length) { await conn.rollback(); return res.status(404).json({ error: `That ${o.one} is no longer on the list.` }); }
-      await conn.execute(`UPDATE ${table} SET name=?, address=?, contact_name=?, contact_email=?, contact_phone=?, notes=? WHERE id=?`,
-        [f.name, f.address, f.contact_name, f.contact_email, f.contact_phone, f.notes, id]);
+      await conn.execute(`UPDATE ${table} SET name=?, address=?, contact_name=?, contact_title=?, contact_email=?, contact_phone=?, notes=? WHERE id=?`,
+        [f.name, f.address, f.contact_name, f.contact_title, f.contact_email, f.contact_phone, f.notes, id]);
       // A rename follows through to every record that used the old name.
       if (rows[0].name !== f.name) await conn.execute(`UPDATE ${o.refTable} SET ${o.refCol} = ? WHERE ${o.refCol} = ?`, [f.name, rows[0].name]);
       await conn.commit();
@@ -496,6 +527,7 @@ async function start() {
     if (!process.env[k]) throw new Error(`${k} is not set. Add the managed MySQL database to this app in GoDaddy Node.js Hosting.`);
   }
   for (const sql of SCHEMA) await pool.query(sql);
+  for (const [table, cols] of Object.entries(ADDED_COLUMNS)) await addColumns(table, cols);
   const [[{ n }]] = await pool.query('SELECT COUNT(*) AS n FROM users');
   if (!n) {
     const email = str(process.env.ADMIN_EMAIL, 190).toLowerCase();
