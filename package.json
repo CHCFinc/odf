@@ -6,7 +6,8 @@
   "main": "server.js",
   "scripts": {
     "build": "echo build",
-    "start": "node server.js"
+    "start": "node server.js",
+    "dev": "node server.js"
   },
   "engines": { "node": ">=22" },
   "dependencies": {
