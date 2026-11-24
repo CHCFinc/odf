@@ -63,6 +63,7 @@
       <option value="">All statuses</option><option>Enrolled</option><option>Completed</option><option>Left early</option>
     </select>
     <label class="check"><input type="checkbox" id="f-due"> Check-in due</label>
+    <button class="btn" id="open-import" type="button">Import CSV</button>
     <button class="btn" id="get-csv" type="button">Download CSV</button>
   </div>
 
@@ -143,6 +144,22 @@
 </dialog>
 
 <dialog id="dlg-detail" aria-label="Student record"><div class="dlg" id="detail"></div></dialog>
+
+<dialog id="dlg-import" aria-labelledby="import-title">
+  <div class="dlg">
+    <div class="dlghead"><h2 id="import-title">Import students from a CSV file</h2><button class="btn small" type="button" id="import-close">Close</button></div>
+    <p class="empty">One row per student, with a header row. First name, Last name and School year entered are required; a row with no status is imported as Completed. Start from the template, or use a file made with Download CSV.</p>
+    <div class="actions start">
+      <button class="btn" type="button" id="import-template">Download template</button>
+      <label class="filepick">Choose a CSV file<input id="import-file" type="file" accept=".csv,text/csv"></label>
+    </div>
+    <div class="stack" id="import-preview"></div>
+    <div class="actions">
+      <span class="err" id="import-err" role="alert"></span>
+      <button class="btn primary" type="button" id="import-go" hidden>Import</button>
+    </div>
+  </div>
+</dialog>
 
 <dialog id="dlg-org" aria-labelledby="org-title">
   <form class="dlg" id="org-form">

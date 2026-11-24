@@ -162,6 +162,7 @@ app.use((req, res, next) => {
 app.get('/healthz', (req, res) => res.json({ ok: true }));
 app.get('/robots.txt', (req, res) => res.type('text/plain').send('User-agent: *\nDisallow: /\n'));
 app.use(express.static(path.join(__dirname, 'public'), { maxAge: 0 }));
+app.use('/api/students/import', express.json({ limit: '2mb' })); // a CSV import carries many rows at once
 app.use('/api', express.json({ limit: '100kb' }));
 app.use('/api', (req, res, next) => {
   res.setHeader('Cache-Control', 'no-store');
@@ -277,6 +278,43 @@ app.post('/api/students', auth, ready, wrap(async (req, res) => {
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [f.first_name, f.last_name, f.school, f.school_year, f.entry_date, f.grade, f.status, f.email, f.phone, f.careers, f.hobbies, f.notes, req.user.id]);
   res.json({ id: r.insertId });
+}));
+// Bulk import from a CSV the page has already read and tidied. Each row is checked again here.
+app.post('/api/students/import', auth, ready, wrap(async (req, res) => {
+  const rows = Array.isArray(req.body.rows) ? req.body.rows : [];
+  if (!rows.length) return res.status(400).json({ error: 'There are no rows to import.' });
+  if (rows.length > 1000) return res.status(400).json({ error: 'Import at most 1,000 students at a time.' });
+  const key = (a, b, y) => `${a}|${b}|${y}`.toLowerCase();
+  const [existing] = await pool.query('SELECT first_name, last_name, school_year FROM students');
+  const seen = new Set(existing.map((s) => key(s.first_name, s.last_name, s.school_year)));
+  const problems = [];
+  let added = 0, skipped = 0;
+  const conn = await pool.getConnection();
+  try {
+    await conn.beginTransaction();
+    for (let n = 0; n < rows.length; n++) {
+      const b = rows[n] && typeof rows[n] === 'object' ? rows[n] : {};
+      const { f, error } = studentFields(b);
+      if (error) { problems.push({ row: Number(b.row) || n + 1, error }); continue; }
+      const k = key(f.first_name, f.last_name, f.school_year);
+      if (seen.has(k)) { skipped++; continue; }
+      seen.add(k);
+      if (f.school) await conn.execute('INSERT IGNORE INTO schools (name) VALUES (?)', [f.school]);
+      const [r] = await conn.execute(
+        `INSERT INTO students (first_name, last_name, school, school_year, entry_date, grade, status, email, phone, careers, hobbies, notes, updated_by)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [f.first_name, f.last_name, f.school, f.school_year, f.entry_date, f.grade, f.status, f.email, f.phone, f.careers, f.hobbies, f.notes, req.user.id]);
+      const company = str(b.company, 200);
+      if (company) {
+        await conn.execute('INSERT IGNORE INTO companies (name) VALUES (?)', [company]);
+        await conn.execute('INSERT INTO internships (student_id, company, role, start_date, end_date, notes) VALUES (?, ?, ?, ?, ?, ?)',
+          [r.insertId, company, str(b.role, 200), dateOrNull(b.internStart), dateOrNull(b.internEnd), '']);
+      }
+      added++;
+    }
+    await conn.commit();
+  } catch (e) { await conn.rollback(); throw e; } finally { conn.release(); }
+  res.json({ added, skipped, problems });
 }));
 app.put('/api/students/:id', auth, ready, wrap(async (req, res) => {
   const { f, error } = studentFields(req.body);

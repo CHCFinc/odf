@@ -131,3 +131,8 @@ section.block{display:flex;flex-direction:column;gap:10px}
   .report .wide table{min-width:0}
   body{font-size:12px}
 }
+.actions.start{justify-content:flex-start}
+.filepick{flex-direction:row;align-items:center;gap:10px;flex-wrap:wrap}
+.filepick input{width:auto;max-width:100%}
+.counts{display:flex;gap:8px;flex-wrap:wrap}
+#import-preview table{min-width:0}

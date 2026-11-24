@@ -293,6 +293,125 @@ $('get-csv').addEventListener('click', () => {
     s.internships.map((i) => i.company).filter(Boolean).join('; '), s.checkins.length, l.date, l.doing, l.where, l.detail, isDue(s) ? 'Yes' : 'No', s.notes]; }));
 });
 
+/* ---------- import students from CSV ---------- */
+const IMPORT_COLS = [
+  ['firstName', 'First name'], ['lastName', 'Last name'], ['school', 'School'], ['schoolYear', 'School year entered'], ['entryDate', 'Date entered'],
+  ['grade', 'Grade at entry'], ['status', 'Status'], ['email', 'Email'], ['phone', 'Phone'], ['careers', 'Career interests'], ['hobbies', 'Hobbies'], ['notes', 'Notes'],
+  ['company', 'Internship company'], ['role', 'Internship role'], ['internStart', 'Internship start'], ['internEnd', 'Internship end'],
+];
+let importRows = [];
+function parseCSV(text) {
+  const rows = []; let row = [], cell = '', q = false;
+  text = text.replace(/^﻿/, '');
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (q) { if (ch === '"') { if (text[i + 1] === '"') { cell += '"'; i++; } else q = false; } else cell += ch; }
+    else if (ch === '"') q = true;
+    else if (ch === ',') { row.push(cell); cell = ''; }
+    else if (ch === '\n' || ch === '\r') { if (ch === '\r' && text[i + 1] === '\n') i++; row.push(cell); rows.push(row); row = []; cell = ''; }
+    else cell += ch;
+  }
+  if (cell !== '' || row.length) { row.push(cell); rows.push(row); }
+  return rows.filter((r) => r.some((c) => c.trim() !== ''));
+}
+const normKey = (h) => h.toLowerCase().replace(/[^a-z]/g, '');
+function toISO(v) {
+  v = v.trim(); if (!v) return '';
+  let iso = null, m = /^(\d{4})-(\d{1,2})-(\d{1,2})/.exec(v);
+  if (m) iso = m[1] + '-' + m[2].padStart(2, '0') + '-' + m[3].padStart(2, '0');
+  m = /^(\d{1,2})\/(\d{1,2})\/(\d{2}|\d{4})$/.exec(v); // US order: month/day/year
+  if (m) iso = (m[3].length === 2 ? '20' + m[3] : m[3]) + '-' + m[1].padStart(2, '0') + '-' + m[2].padStart(2, '0');
+  if (!iso) return null;
+  const d = new Date(iso + 'T12:00:00Z'); // rejects impossible dates such as month 13 or Feb 30
+  return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === iso ? iso : null;
+}
+function toSchoolYear(v, entryISO) {
+  v = v.trim();
+  const m = /^(\d{4})(?:\s*[-\/–]\s*(\d{2}|\d{4}))?$/.exec(v);
+  if (m) return syLabel(+m[1]);
+  if (!v && entryISO) { const y = +entryISO.slice(0, 4), mo = +entryISO.slice(5, 7); return syLabel(mo >= 7 ? y : y - 1); }
+  return null;
+}
+function toStatus(v) {
+  const t = v.trim().toLowerCase();
+  if (!t || /^(completed|complete|alumni|alumnus|alumna|graduated|finished)$/.test(t)) return 'Completed';
+  if (/^(enrolled|active|current)$/.test(t)) return 'Enrolled';
+  if (/^(left early|left|withdrew|withdrawn|dropped)$/.test(t)) return 'Left early';
+  return null;
+}
+function toGrade(v) {
+  const t = v.trim(); if (!t) return '';
+  const m = /(\d{1,2})/.exec(t);
+  return m && ['8', '9', '10', '11', '12'].includes(m[1]) ? m[1] : 'Other';
+}
+function readImport(text) {
+  const table = parseCSV(text);
+  if (table.length < 2) return { error: 'That file has no student rows under its header row.' };
+  const want = new Map(IMPORT_COLS.map(([k, label]) => [normKey(label), k]));
+  for (const [alias, k] of [['firstname', 'firstName'], ['lastname', 'lastName'], ['schoolyear', 'schoolYear'], ['entrydate', 'entryDate'], ['grade', 'grade'], ['company', 'company'], ['careerinterest', 'careers']]) want.set(alias, k);
+  const cols = table[0].map((h) => want.get(normKey(h)) || null);
+  if (!cols.includes('firstName') || !cols.includes('lastName')) return { error: 'The header row needs columns named First name and Last name. Download the template to see the layout.' };
+  const have = new Set(students.map((s) => (s.firstName + '|' + s.lastName + '|' + s.schoolYear).toLowerCase()));
+  const out = table.slice(1).map((r, n) => {
+    const d = { row: n + 2 };
+    // Files made by Download CSV put an apostrophe in front of cells that look like formulas.
+    cols.forEach((k, i) => { if (k) d[k] = (r[i] || '').trim().replace(/^'(?=[=+\-@])/, ''); });
+    for (const [k] of IMPORT_COLS) if (d[k] == null) d[k] = '';
+    const problems = [];
+    if (!d.firstName || !d.lastName) problems.push('First or last name is missing');
+    for (const k of ['entryDate', 'internStart', 'internEnd']) { const iso = toISO(d[k]); if (iso === null) problems.push('Date "' + d[k] + '" is not readable (use 2021-09-13 or 9/13/2021)'); else d[k] = iso; }
+    const sy = toSchoolYear(d.schoolYear, d.entryDate);
+    if (!sy) problems.push(d.schoolYear ? 'School year "' + d.schoolYear + '" is not readable (use 2021-22)' : 'School year entered is missing'); else d.schoolYear = sy;
+    const st = toStatus(d.status);
+    if (!st) problems.push('Status "' + d.status + '" is not Enrolled, Completed or Left early'); else d.status = st;
+    d.grade = toGrade(d.grade);
+    if (d.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(d.email)) problems.push('Email "' + d.email + '" does not look right');
+    const key = (d.firstName + '|' + d.lastName + '|' + d.schoolYear).toLowerCase();
+    d.problem = problems.join('; ');
+    d.duplicate = !d.problem && have.has(key);
+    if (!d.problem) have.add(key);
+    return d;
+  });
+  return { rows: out };
+}
+function showImport(res) {
+  const box = $('import-preview'); importRows = []; $('import-go').hidden = true; $('import-err').textContent = '';
+  if (res.error) { box.replaceChildren(el('p', { class: 'err', text: res.error })); return; }
+  const bad = res.rows.filter((d) => d.problem), dup = res.rows.filter((d) => d.duplicate);
+  importRows = res.rows.filter((d) => !d.problem && !d.duplicate);
+  const kids = [el('div', { class: 'counts' },
+    el('span', { class: 'pill p-Enrolled', text: importRows.length + ' ready to import' }),
+    bad.length ? el('span', { class: 'pill p-due', text: bad.length + ' need fixing' }) : null,
+    dup.length ? el('span', { class: 'pill p-Left', text: dup.length + ' already on record, skipped' }) : null)];
+  if (bad.length) kids.push(rTable('Rows that will not be imported until fixed in the file', ['Row', 'Student', 'Problem'], bad.slice(0, 50).map((d) => [d.row, (d.firstName + ' ' + d.lastName).trim(), d.problem])),
+    bad.length > 50 ? el('p', { class: 'empty', text: 'Showing the first 50 of ' + bad.length + '.' }) : null);
+  if (importRows.length) kids.push(rTable('First rows as they will be imported', ['Student', 'School', 'Entered', 'Grade', 'Status', 'Internship'],
+    importRows.slice(0, 5).map((d) => [d.firstName + ' ' + d.lastName, d.school, d.schoolYear, d.grade, d.status, d.company])));
+  if (importRows.length > 1000) { kids.push(el('p', { class: 'err', text: 'This file has more than 1,000 students. Split it into smaller files.' })); importRows = []; }
+  box.replaceChildren(...kids.filter(Boolean));
+  $('import-go').hidden = !importRows.length;
+  $('import-go').textContent = 'Import ' + importRows.length + (importRows.length === 1 ? ' student' : ' students');
+}
+$('open-import').addEventListener('click', () => { $('import-file').value = ''; $('import-preview').replaceChildren(); $('import-err').textContent = ''; $('import-go').hidden = true; importRows = []; $('dlg-import').showModal(); });
+$('import-close').addEventListener('click', () => $('dlg-import').close());
+$('import-template').addEventListener('click', () => downloadCSV('odf-import-template', IMPORT_COLS.map((c) => c[1]),
+  [['Maria', 'Example', 'Example High School', '2021-22', '2021-09-13', '11', 'Completed', 'maria@example.org', '555-0100', 'Nursing, public health', 'Soccer', 'Delete this example row', 'Example Company', 'Office intern', '2022-02-07', '2022-06-10']]));
+$('import-file').addEventListener('change', async () => {
+  const f = $('import-file').files[0]; if (!f) return;
+  if (f.size > 2e6) { showImport({ error: 'That file is larger than 2 MB. Split it into smaller files.' }); return; }
+  try { showImport(readImport(await f.text())); } catch (e) { showImport({ error: 'That file could not be read as a CSV.' }); }
+});
+$('import-go').addEventListener('click', async () => {
+  const btn = $('import-go'); btn.disabled = true; $('import-err').textContent = '';
+  try {
+    const r = await api('POST', '/api/students/import', { rows: importRows });
+    await load(); importRows = []; btn.hidden = true; $('import-file').value = '';
+    $('import-preview').replaceChildren(el('div', { class: 'note' }, el('strong', { text: r.added + (r.added === 1 ? ' student' : ' students') + ' imported' }),
+      [r.skipped ? r.skipped + ' already on record and skipped. ' : '', r.problems.length ? r.problems.length + ' refused by the server: ' + r.problems.slice(0, 5).map((p) => 'row ' + p.row + ' (' + p.error + ')').join(', ') : ''].join('') || 'They are now in the Students list.'));
+  } catch (err) { $('import-err').textContent = err.message; }
+  btn.disabled = false;
+});
+
 /* ---------- tabs ---------- */
 const TABS = ['students', 'schools', 'companies', 'reports'];
 function renderTab() {
