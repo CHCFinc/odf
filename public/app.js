@@ -38,7 +38,7 @@ async function api(method, url, body) {
 /* ---------- views ---------- */
 function closeDialogs() { for (const d of document.querySelectorAll('dialog[open]')) d.close(); }
 function showLogin() {
-  me = null; students = []; dir = { schools: [], companies: [] }; loaded = false; closeDialogs();
+  me = null; students = []; dir = { schools: [], companies: [] }; loaded = false; tab = 'students'; closeDialogs();
   $('view-app').hidden = true; $('view-login').hidden = false; $('l-pass').value = ''; $('l-email').focus();
 }
 function showApp() {
@@ -456,12 +456,13 @@ $('import-go').addEventListener('click', async () => {
 });
 
 /* ---------- tabs ---------- */
-const TABS = ['students', 'schools', 'companies', 'reports'];
+const TABS = ['students', 'schools', 'companies', 'reports', 'settings'];
 function renderTab() {
   for (const t of TABS) $('tab-' + t).hidden = t !== tab;
   for (const b of document.querySelectorAll('.tab')) { if (b.dataset.tab === tab) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current'); }
   if (tab === 'schools' || tab === 'companies') renderOrgs(tab);
   if (tab === 'reports') renderReport();
+  if (tab === 'settings' && me) { $('set-name').textContent = me.name || 'Not set'; $('set-email').textContent = me.email; $('set-role').textContent = me.role === 'admin' ? 'Admin' : 'Staff'; }
 }
 for (const b of document.querySelectorAll('.tab')) b.addEventListener('click', () => { tab = b.dataset.tab; renderTab(); });
 
@@ -624,8 +625,10 @@ function applyTheme(t) {
   try { if (t === 'auto') localStorage.removeItem('odf-theme'); else localStorage.setItem('odf-theme', t); } catch (e) { /* the choice still applies until the page is closed */ }
   if (t === 'auto') document.documentElement.removeAttribute('data-theme'); else document.documentElement.setAttribute('data-theme', t);
   for (const b of document.querySelectorAll('.theme-btn')) { b.textContent = 'Theme: ' + THEME_LABEL[t]; b.dataset.theme = t; }
+  for (const b of document.querySelectorAll('[data-set-theme]')) b.setAttribute('aria-pressed', String(b.dataset.setTheme === t));
 }
 for (const b of document.querySelectorAll('.theme-btn')) b.addEventListener('click', () => applyTheme({ auto: 'light', light: 'dark', dark: 'auto' }[b.dataset.theme || 'auto']));
+for (const b of document.querySelectorAll('[data-set-theme]')) b.addEventListener('click', () => applyTheme(b.dataset.setTheme));
 applyTheme(currentTheme());
 
 /* ---------- start ---------- */

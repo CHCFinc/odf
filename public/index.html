@@ -37,8 +37,6 @@
     <div class="who">
       <span id="who"></span>
       <button class="btn small" id="open-staff" type="button" hidden>Staff accounts</button>
-      <button class="btn small theme-btn" type="button">Theme</button>
-      <button class="btn small" id="open-pass" type="button">Change password</button>
       <button class="btn small" id="sign-out" type="button">Sign out</button>
       <button class="btn primary" id="add-student" type="button">Add student</button>
     </div>
@@ -49,6 +47,7 @@
     <button class="tab" type="button" data-tab="schools">Schools</button>
     <button class="tab" type="button" data-tab="companies">Companies</button>
     <button class="tab" type="button" data-tab="reports">Reports</button>
+    <button class="tab" type="button" data-tab="settings">Settings</button>
   </nav>
 
   <section class="pane" id="tab-students">
@@ -117,6 +116,32 @@
       <button class="btn" type="button" id="r-print">Print</button>
     </div>
     <div class="report" id="report"></div>
+  </section>
+
+  <section class="pane" id="tab-settings" hidden>
+    <h2>Settings</h2>
+    <div class="setcard">
+      <h3>Your account</h3>
+      <div class="facts">
+        <div><span>Name</span><b id="set-name"></b></div>
+        <div><span>Email</span><b id="set-email"></b></div>
+        <div><span>Access</span><b id="set-role"></b></div>
+      </div>
+    </div>
+    <div class="setcard">
+      <h3>Password</h3>
+      <p class="empty">Use at least 10 characters. Changing it signs you out on any other device.</p>
+      <div><button class="btn" id="open-pass" type="button">Change password</button></div>
+    </div>
+    <div class="setcard">
+      <h3>Appearance</h3>
+      <p class="empty">Applies to this browser only; each person chooses their own.</p>
+      <div class="seg" role="group" aria-label="Theme">
+        <button class="btn" type="button" data-set-theme="light">Light</button>
+        <button class="btn" type="button" data-set-theme="dark">Dark</button>
+        <button class="btn" type="button" data-set-theme="auto">Match device</button>
+      </div>
+    </div>
   </section>
 </div>
 

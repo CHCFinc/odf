@@ -140,3 +140,8 @@ section.block{display:flex;flex-direction:column;gap:10px}
 .grid .grid{gap:12px}
 .facts h3{grid-column:1/-1;margin-top:4px}
 @media (max-width:640px){.grid.three{grid-template-columns:1fr}}
+.setcard{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:16px;display:flex;flex-direction:column;gap:10px;max-width:720px}
+.setcard .facts{border:0;padding:0;background:none}
+.setcard .facts b{font-weight:500;overflow-wrap:anywhere}
+.seg{display:flex;gap:8px;flex-wrap:wrap}
+.seg .btn[aria-pressed="true"]{background:var(--accent);border-color:var(--accent);color:var(--accent-ink);font-weight:600}
