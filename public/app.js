@@ -96,6 +96,43 @@ const gradeNow = (s) => {
 };
 const fullName = (s) => ((s.firstName || '') + ' ' + (s.lastName || '')).trim() || 'Unnamed student';
 const ageOf = (dob) => { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(dob || ''); if (!m) return 0; const t = new Date(); let a = t.getFullYear() - +m[1]; if (t.getMonth() + 1 < +m[2] || (t.getMonth() + 1 === +m[2] && t.getDate() < +m[3])) a--; return a > 0 && a < 120 ? a : 0; };
+// A student's photo, or their initials on a plain circle when there is none.
+function avatar(s, size) {
+  if (s.photo) return el('img', { class: 'avatar ' + size, src: '/api/students/' + s.id + '/photo?v=' + s.photo, alt: '', loading: 'lazy', width: size === 'big' ? 96 : 36, height: size === 'big' ? 96 : 36 });
+  return el('span', { class: 'avatar ' + size, 'aria-hidden': 'true', text: ((s.firstName || '?')[0] + (s.lastName || '')[0]).toUpperCase() });
+}
+// Turns "@handle" or a pasted link into a safe link. Anything that is not a plain handle or an http(s) address is shown as text only.
+const SOCIAL_BASE = { linkedin: 'https://www.linkedin.com/in/', instagram: 'https://www.instagram.com/', tiktok: 'https://www.tiktok.com/@', facebook: 'https://www.facebook.com/' };
+function socialLink(kind, value) {
+  const v = (value || '').trim(); if (!v) return '';
+  let href = '';
+  if (/^https?:\/\/[^\s]+$/i.test(v)) href = v;
+  else if (/^(www\.)?[a-z0-9-]+(\.[a-z0-9-]+)+(\/\S*)?$/i.test(v) && v.includes('.') && (kind === 'otherLink' || v.includes('/'))) href = 'https://' + v;
+  else if (SOCIAL_BASE[kind] && /^@?[A-Za-z0-9._-]{1,60}$/.test(v)) href = SOCIAL_BASE[kind] + v.replace(/^@/, '');
+  return href ? el('a', { href, target: '_blank', rel: 'noopener noreferrer', text: v }) : v;
+}
+// Photos are cut to a centered square and shrunk in the browser, so only a small JPEG is ever uploaded.
+function readPhoto(file) {
+  return new Promise((resolve, reject) => {
+    const fail = () => reject(new Error('That file could not be opened as a photo. Use a JPG or PNG (an iPhone HEIC photo needs converting first).'));
+    if (!file || file.size > 15e6) return reject(new Error('Choose a photo under 15 MB.'));
+    const reader = new FileReader();
+    reader.onerror = fail;
+    reader.onload = () => {
+      const img = new Image();
+      img.onerror = fail;
+      img.onload = () => {
+        const side = Math.min(img.naturalWidth, img.naturalHeight); if (!side) return fail();
+        const c = el('canvas', { width: 400, height: 400 }), g = c.getContext('2d');
+        g.fillStyle = '#fff'; g.fillRect(0, 0, 400, 400);
+        g.drawImage(img, (img.naturalWidth - side) / 2, (img.naturalHeight - side) / 2, side, side, 0, 0, 400, 400);
+        resolve(c.toDataURL('image/jpeg', 0.85));
+      };
+      img.src = reader.result;
+    };
+    reader.readAsDataURL(file);
+  });
+}
 const pill = (s) => el('span', { class: 'pill p-' + (s === 'Left early' ? 'Left' : s), text: s || 'Enrolled' });
 function setState(title, body) { const n = $('state'); n.replaceChildren(el('strong', { text: title }), body || ''); n.hidden = false; }
 
@@ -144,7 +181,7 @@ function render() {
   $('rows').replaceChildren(...rows.map((s) => {
     const l = s.checkins[0], gn = gradeNow(s), due = isDue(s);
     return el('tr', {},
-      el('td', {}, el('button', { class: 'name', type: 'button', text: fullName(s), onclick: () => openDetail(s.id) }), el('div', { class: 'sub', text: s.school || '' })),
+      el('td', {}, el('div', { class: 'person' }, avatar(s, 'small'), el('div', {}, el('button', { class: 'name', type: 'button', text: fullName(s), onclick: () => openDetail(s.id) }), el('div', { class: 'sub', text: s.school || '' })))),
       el('td', {}, s.schoolYear || '', el('div', { class: 'sub', text: fmtDate(s.entryDate) })),
       el('td', {}, s.grade ? (parseInt(s.grade, 10) ? ord(s.grade) : s.grade) : '', el('div', { class: 'sub', text: gn })),
       el('td', { text: s.careers || '' }),
@@ -178,7 +215,8 @@ const FORM_FIELDS = { 'f-first': 'firstName', 'f-middle': 'middleName', 'f-last'
   'f-entry': 'entryDate', 'f-grade': 'grade', 'f-status': 'status', 'f-papers': 'workingPapers', 'f-college': 'collegeAccepted', 'f-careers': 'careers', 'f-hobbies': 'hobbies',
   'f-street': 'street', 'f-apt': 'apt', 'f-city': 'city', 'f-state': 'state', 'f-zip': 'zip', 'f-nycha': 'nycha',
   'f-pname': 'parentName', 'f-pemail': 'parentEmail', 'f-pphone': 'parentPhone', 'f-pphone2': 'parentPhone2', 'f-ename': 'emergencyName', 'f-ephone': 'emergencyPhone',
-  'f-gender': 'gender', 'f-orient': 'sexualOrientation', 'f-ethnicity': 'ethnicity', 'f-race': 'race', 'f-medical': 'medical', 'f-notes': 'notes' };
+  'f-gender': 'gender', 'f-orient': 'sexualOrientation', 'f-ethnicity': 'ethnicity', 'f-race': 'race', 'f-medical': 'medical', 'f-notes': 'notes',
+  'f-linkedin': 'linkedin', 'f-instagram': 'instagram', 'f-tiktok': 'tiktok', 'f-facebook': 'facebook', 'f-otherlink': 'otherLink' };
 function openForm(s) {
   editingId = s ? s.id : null;
   $('form-title').textContent = s ? 'Edit ' + fullName(s) : 'Add student';
@@ -217,6 +255,18 @@ function confirmBtn(label, run) {
 }
 const act = async (method, url, body) => { try { await api(method, url, body); } catch (e) { /* the reload below shows the real state */ } await load(); };
 
+function photoControls(s) {
+  const err = el('span', { class: 'err', role: 'alert' });
+  const input = el('input', { id: 'photo-file', type: 'file', accept: 'image/*', hidden: true, 'aria-label': 'Photo file' });
+  input.addEventListener('change', async () => {
+    err.textContent = '';
+    try { await api('PUT', '/api/students/' + s.id + '/photo', { image: await readPhoto(input.files[0]) }); openRef = null; await load(); }
+    catch (ex) { err.textContent = ex.message; input.value = ''; }
+  });
+  return el('div', { class: 'photoctl' }, input,
+    el('button', { class: 'btn link', type: 'button', text: s.photo ? 'Replace photo' : 'Add photo', onclick: () => input.click() }),
+    s.photo ? confirmBtn('Remove photo', async () => { openRef = null; await act('DELETE', '/api/students/' + s.id + '/photo'); }) : null, err);
+}
 function renderDetail() {
   const s = students.find((x) => x.id === openId), box = $('detail');
   const close = el('button', { class: 'btn small', type: 'button', text: 'Close', onclick: () => $('dlg-detail').close() });
@@ -226,7 +276,7 @@ function renderDetail() {
   const gn = gradeNow(s);
   const kids = [
     el('div', { class: 'dlghead' },
-      el('div', {}, el('h2', { text: fullName(s) }), el('div', { class: 'pills' }, pill(s.status), isDue(s) ? el('span', { class: 'pill p-due', text: 'Check-in due' }) : null)),
+      el('div', { class: 'person' }, avatar(s, 'big'), el('div', {}, el('h2', { text: [s.firstName, s.middleName, s.lastName].filter(Boolean).join(' ') || 'Unnamed student' }), el('div', { class: 'pills' }, pill(s.status), isDue(s) ? el('span', { class: 'pill p-due', text: 'Check-in due' }) : null), photoControls(s))),
       el('div', { class: 'actions' }, el('button', { class: 'btn small', type: 'button', text: 'Edit details', onclick: () => openForm(s) }), close)),
     el('div', { class: 'facts' },
       fact('School', s.school), fact('Entered ODF', [s.schoolYear, fmtDate(s.entryDate)].filter(Boolean).join(' · ')),
@@ -239,6 +289,9 @@ function renderDetail() {
       el('h3', { text: 'Parent and emergency contacts' }),
       fact('Parent or guardian', s.parentName), fact('Parent email', s.parentEmail), fact('Parent phone', [s.parentPhone, s.parentPhone2].filter(Boolean).join(' · ')),
       fact('Emergency contact', s.emergencyName), fact('Emergency phone', s.emergencyPhone),
+      el('h3', { text: 'Social media' }),
+      fact('LinkedIn', socialLink('linkedin', s.linkedin)), fact('Instagram', socialLink('instagram', s.instagram)), fact('TikTok', socialLink('tiktok', s.tiktok)),
+      fact('Facebook', socialLink('facebook', s.facebook)), fact('Other link', socialLink('otherLink', s.otherLink)),
       el('h3', { text: 'Demographics and health' }),
       fact('Gender', s.gender), fact('Sexual orientation', s.sexualOrientation), fact('Ethnicity', s.ethnicity), fact('Race', s.race),
       fact('Allergies and medical notes', s.medical, true), s.notes ? fact('Notes', s.notes, true) : null),
@@ -316,6 +369,7 @@ const IMPORT_COLS = [
   ['workingPapers', 'Has working papers (I-9)'], ['collegeAccepted', 'College accepted'],
   ['parentName', 'Parent name'], ['parentEmail', 'Parent email'], ['parentPhone', 'Parent phone'], ['parentPhone2', 'Parent phone 2'],
   ['emergencyName', 'Emergency contact name'], ['emergencyPhone', 'Emergency contact phone'],
+  ['linkedin', 'LinkedIn'], ['instagram', 'Instagram'], ['tiktok', 'TikTok'], ['facebook', 'Facebook'], ['otherLink', 'Other link'],
   ['careers', 'Career interests'], ['hobbies', 'Hobbies'], ['notes', 'Notes'],
   ['company', 'Internship company'], ['role', 'Internship role'], ['internStart', 'Internship start'], ['internEnd', 'Internship end'],
   ['companyAddress', 'Internship address'], ['companyContact', 'Internship contact name'], ['companyContactTitle', 'Internship contact job title'],

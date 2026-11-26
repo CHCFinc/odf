@@ -4,7 +4,7 @@ Tracks students in CHCF's Opening the Doors to the Future (ODF) program: intake 
 
 Built for GoDaddy Node.js Hosting: a Node.js 22 Express app with a managed MySQL database.
 
-Each student record also holds a date of birth, home address, parent and emergency contacts, demographics, and allergy or medical notes, and all staff accounts can see them. Social Security numbers are deliberately not stored, and the CSV import skips any such column.
+Each student record also holds a date of birth, home address, parent and emergency contacts, demographics, and allergy or medical notes, and all staff accounts can see them. A record can also carry social media links and one face photo, which the browser shrinks to a small square before upload and the app stores in the database; photos are served only to signed-in staff. Social Security numbers are deliberately not stored, and the CSV import skips any such column.
 
 ## Deploy on GoDaddy Node.js Hosting
 

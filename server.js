@@ -109,6 +109,13 @@ const SCHEMA = [
     notes TEXT NULL,
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+  // One face photo per student, kept in the database so it survives redeploys.
+  `CREATE TABLE IF NOT EXISTS student_photos (
+    student_id INT PRIMARY KEY,
+    data MEDIUMBLOB NOT NULL,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_photos_student FOREIGN KEY (student_id) REFERENCES students(id) ON DELETE CASCADE
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
   // Carry names already typed on student and internship records into the two directories.
   "INSERT IGNORE INTO schools (name) SELECT DISTINCT TRIM(school) FROM students WHERE TRIM(school) <> ''",
   "INSERT IGNORE INTO companies (name) SELECT DISTINCT TRIM(company) FROM internships WHERE TRIM(company) <> ''",
@@ -120,6 +127,7 @@ const ADDED_COLUMNS = {
   students: {
     middle_name: TXT(100), dob: 'DATE NULL', gender: TXT(40), sexual_orientation: TXT(60), ethnicity: TXT(60), race: TXT(80), medical: TXT(500),
     street: TXT(200), apt: TXT(60), city: TXT(80), state: TXT(20), zip: TXT(12), nycha: TXT(120), working_papers: TXT(20), college_accepted: TXT(300),
+    linkedin: TXT(200), instagram: TXT(200), tiktok: TXT(200), facebook: TXT(200), other_link: TXT(200),
     parent_name: TXT(200), parent_email: TXT(190), parent_phone: TXT(120), parent_phone2: TXT(120), emergency_name: TXT(200), emergency_phone: TXT(120),
   },
   schools: { contact_title: TXT(120) },
@@ -183,6 +191,7 @@ app.use((req, res, next) => {
 app.get('/healthz', (req, res) => res.json({ ok: true }));
 app.get('/robots.txt', (req, res) => res.type('text/plain').send('User-agent: *\nDisallow: /\n'));
 app.use(express.static(path.join(__dirname, 'public'), { maxAge: 0 }));
+app.use('/api/students/:id/photo', express.json({ limit: '1mb' })); // a photo arrives as text inside the request
 app.use('/api/students/import', express.json({ limit: '2mb' })); // a CSV import carries many rows at once
 app.use('/api', express.json({ limit: '100kb' }));
 app.use('/api', (req, res, next) => {
@@ -257,6 +266,7 @@ const TEXT_COLS = {
   gender: ['gender', 40], sexual_orientation: ['sexualOrientation', 60], ethnicity: ['ethnicity', 60], race: ['race', 80], medical: ['medical', 500],
   street: ['street', 200], apt: ['apt', 60], city: ['city', 80], state: ['state', 20], zip: ['zip', 12], nycha: ['nycha', 120],
   working_papers: ['workingPapers', 20], college_accepted: ['collegeAccepted', 300],
+  linkedin: ['linkedin', 200], instagram: ['instagram', 200], tiktok: ['tiktok', 200], facebook: ['facebook', 200], other_link: ['otherLink', 200],
   parent_name: ['parentName', 200], parent_email: ['parentEmail', 190], parent_phone: ['parentPhone', 120], parent_phone2: ['parentPhone2', 120],
   emergency_name: ['emergencyName', 200], emergency_phone: ['emergencyPhone', 120],
 };
@@ -282,13 +292,15 @@ const insertStudent = (db, f, userId) => {
 };
 app.get('/api/students', auth, ready, wrap(async (req, res) => {
   const [students] = await pool.query(
-    `SELECT s.*, u.name AS updated_by_name FROM students s LEFT JOIN users u ON u.id = s.updated_by ORDER BY s.last_name, s.first_name`);
+    `SELECT s.*, u.name AS updated_by_name, (SELECT UNIX_TIMESTAMP(p.updated_at) FROM student_photos p WHERE p.student_id = s.id) AS photo_v
+     FROM students s LEFT JOIN users u ON u.id = s.updated_by ORDER BY s.last_name, s.first_name`);
   const [interns] = await pool.query('SELECT * FROM internships ORDER BY start_date DESC, id DESC');
   const [checks] = await pool.query(
     `SELECT c.*, u.name AS by_name FROM checkins c LEFT JOIN users u ON u.id = c.recorded_by ORDER BY c.checkin_date DESC, c.id DESC`);
   const byId = new Map();
   const out = students.map((s) => {
-    const o = { id: s.id, updatedAt: s.updated_at, updatedByName: s.updated_by_name || '', internships: [], checkins: [] };
+    // photo is 0 when there is none; otherwise a number that changes whenever the photo does, so browsers fetch the new one
+    const o = { id: s.id, photo: Number(s.photo_v) || 0, updatedAt: s.updated_at, updatedByName: s.updated_by_name || '', internships: [], checkins: [] };
     for (const [col, [key]] of Object.entries(TEXT_COLS)) o[key] = s[col] || '';
     for (const [col, key] of Object.entries(DATE_COLS)) o[key] = s[col] || '';
     byId.set(s.id, o);
@@ -365,6 +377,35 @@ app.delete('/api/students/:id', auth, ready, admin, wrap(async (req, res) => {
 
 // A school or company named on a record is added to its directory if it is not there yet.
 const ensureOrg = (table, name) => (name ? pool.execute(`INSERT IGNORE INTO ${table} (name) VALUES (?)`, [name]) : null);
+/* ---------- student photos ---------- */
+const MAX_PHOTO_BYTES = 400 * 1024;
+app.get('/api/students/:id/photo', auth, ready, wrap(async (req, res) => {
+  const [rows] = await pool.execute('SELECT data FROM student_photos WHERE student_id = ?', [Number(req.params.id) || 0]);
+  if (!rows.length) return res.status(404).json({ error: 'No photo.' });
+  // Only signed-in staff get this far. "private" keeps shared caches from storing it.
+  res.setHeader('Cache-Control', 'private, max-age=86400');
+  res.type('image/jpeg').send(rows[0].data);
+}));
+app.put('/api/students/:id/photo', auth, ready, wrap(async (req, res) => {
+  const id = Number(req.params.id) || 0;
+  const m = /^data:image\/jpeg;base64,([A-Za-z0-9+/=]+)$/.exec(typeof req.body.image === 'string' ? req.body.image : '');
+  if (!m) return res.status(400).json({ error: 'That photo could not be read. Try a JPG or PNG file.' });
+  const data = Buffer.from(m[1], 'base64');
+  // The page always sends a small JPEG it has redrawn itself; anything else is refused.
+  if (data.length < 4 || data[0] !== 0xff || data[1] !== 0xd8 || data[2] !== 0xff) return res.status(400).json({ error: 'That photo could not be read. Try a JPG or PNG file.' });
+  if (data.length > MAX_PHOTO_BYTES) return res.status(400).json({ error: 'That photo is too large.' });
+  if (!(await studentExists(id))) return res.status(404).json({ error: 'That student record no longer exists.' });
+  await pool.execute('INSERT INTO student_photos (student_id, data) VALUES (?, ?) ON DUPLICATE KEY UPDATE data = VALUES(data), updated_at = NOW()', [id, data]);
+  await touch(id, req.user.id);
+  res.json({ ok: true });
+}));
+app.delete('/api/students/:id/photo', auth, ready, wrap(async (req, res) => {
+  const id = Number(req.params.id) || 0;
+  await pool.execute('DELETE FROM student_photos WHERE student_id = ?', [id]);
+  await touch(id, req.user.id);
+  res.json({ ok: true });
+}));
+
 const touch = (id, userId) => pool.execute('UPDATE students SET updated_at = NOW(), updated_by = ? WHERE id = ?', [userId, id]);
 const studentExists = async (id) => (await pool.execute('SELECT id FROM students WHERE id = ?', [id]))[0].length > 0;
 
