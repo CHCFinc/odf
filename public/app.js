@@ -272,29 +272,32 @@ function renderDetail() {
   const close = el('button', { class: 'btn small', type: 'button', text: 'Close', onclick: () => $('dlg-detail').close() });
   if (!s) { box.replaceChildren(el('p', { class: 'empty', text: 'This record was removed.' }), el('div', { class: 'actions' }, close)); return; }
   openRef = s;
+  const sect = (title, ...facts) => el('section', { class: 'sect' }, el('h3', { text: title }), el('div', { class: 'facts' }, facts));
   const fact = (k, v, full) => el('div', { class: full ? 'full' : '' }, el('span', { text: k }), v || 'Not recorded');
   const gn = gradeNow(s);
   const kids = [
     el('div', { class: 'dlghead' },
       el('div', { class: 'person' }, avatar(s, 'big'), el('div', {}, el('h2', { text: [s.firstName, s.middleName, s.lastName].filter(Boolean).join(' ') || 'Unnamed student' }), el('div', { class: 'pills' }, pill(s.status), isDue(s) ? el('span', { class: 'pill p-due', text: 'Check-in due' }) : null), photoControls(s))),
       el('div', { class: 'actions' }, el('button', { class: 'btn small', type: 'button', text: 'Edit details', onclick: () => openForm(s) }), close)),
-    el('div', { class: 'facts' },
+    sect('Program',
       fact('School', s.school), fact('Entered ODF', [s.schoolYear, fmtDate(s.entryDate)].filter(Boolean).join(' · ')),
       fact('Grade', s.grade ? (parseInt(s.grade, 10) ? ord(s.grade) + ' at entry' : s.grade) + (gn ? ' · ' + gn : '') : ''),
-      fact('Email', s.email), fact('Phone', s.phone), fact('Date of birth', fmtDate(s.dob) + (ageOf(s.dob) ? ' · age ' + ageOf(s.dob) : '')),
       fact('Working papers (I-9)', s.workingPapers), fact('College accepted to', s.collegeAccepted), fact('Hobbies', s.hobbies),
-      fact('Initial career interests', s.careers, true),
-      el('h3', { text: 'Home address' }),
-      fact('Address', [s.street, s.apt].filter(Boolean).join(', ')), fact('City, state, zip', [[s.city, s.state].filter(Boolean).join(', '), s.zip].filter(Boolean).join(' ')), fact('NYCHA', s.nycha),
-      el('h3', { text: 'Parent and emergency contacts' }),
+      fact('Initial career interests', s.careers, true)),
+    sect('Student contact',
+      fact('Email', s.email), fact('Phone', s.phone), fact('Date of birth', fmtDate(s.dob) + (ageOf(s.dob) ? ' · age ' + ageOf(s.dob) : ''))),
+    sect('Home address',
+      fact('Address', [s.street, s.apt].filter(Boolean).join(', ')), fact('City, state, zip', [[s.city, s.state].filter(Boolean).join(', '), s.zip].filter(Boolean).join(' ')), fact('NYCHA', s.nycha)),
+    sect('Parent and emergency contacts',
       fact('Parent or guardian', s.parentName), fact('Parent email', s.parentEmail), fact('Parent phone', [s.parentPhone, s.parentPhone2].filter(Boolean).join(' · ')),
-      fact('Emergency contact', s.emergencyName), fact('Emergency phone', s.emergencyPhone),
-      el('h3', { text: 'Social media' }),
+      fact('Emergency contact', s.emergencyName), fact('Emergency phone', s.emergencyPhone)),
+    sect('Social media',
       fact('LinkedIn', socialLink('linkedin', s.linkedin)), fact('Instagram', socialLink('instagram', s.instagram)), fact('TikTok', socialLink('tiktok', s.tiktok)),
-      fact('Facebook', socialLink('facebook', s.facebook)), fact('Other link', socialLink('otherLink', s.otherLink)),
-      el('h3', { text: 'Demographics and health' }),
+      fact('Facebook', socialLink('facebook', s.facebook)), fact('Other link', socialLink('otherLink', s.otherLink))),
+    sect('Demographics and health',
       fact('Gender', s.gender), fact('Sexual orientation', s.sexualOrientation), fact('Ethnicity', s.ethnicity), fact('Race', s.race),
-      fact('Allergies and medical notes', s.medical, true), s.notes ? fact('Notes', s.notes, true) : null),
+      fact('Allergies and medical notes', s.medical, true)),
+    s.notes ? sect('Notes', fact('Staff notes', s.notes, true)) : null,
   ];
 
   kids.push(el('section', { class: 'block' },

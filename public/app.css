@@ -151,3 +151,9 @@ section.block{display:flex;flex-direction:column;gap:10px}
 .avatar.big{width:96px;height:96px;font-size:30px;font-family:var(--display)}
 .photoctl{display:flex;gap:12px;flex-wrap:wrap;align-items:center;margin-top:8px}
 .facts a{color:var(--accent);overflow-wrap:anywhere}
+.sect{background:var(--surface);border:1px solid var(--line);border-radius:10px;overflow:hidden}
+.sect>h3{padding:9px 14px;background:var(--accent-soft);color:var(--accent);border-bottom:1px solid var(--line)}
+.sect .facts{border:0;border-radius:0;background:none}
+#detail section.block{border-top:2px solid var(--line);padding-top:16px}
+#student-form h3{border-top:1px solid var(--line);padding-top:16px;color:var(--accent)}
+#student-form h3:first-of-type{border-top:0;padding-top:0}
