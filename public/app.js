@@ -256,19 +256,23 @@ function confirmBtn(label, run) {
 const act = async (method, url, body) => { try { await api(method, url, body); } catch (e) { /* the reload below shows the real state */ } await load(); };
 
 // The map is Google's. It loads only when someone asks for it, so an address is not sent to Google just by opening a record.
-function addressMap(s) {
-  if (!s.street && !s.zip) return null;
-  const q = encodeURIComponent([s.street, [s.city, s.state].filter(Boolean).join(', '), s.zip].filter(Boolean).join(', '));
+const mapsLink = (query, text) => el('a', { href: 'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent(query), target: '_blank', rel: 'noopener noreferrer', text: text || 'Open in Google Maps' });
+function mapBox(query, title) {
   const box = el('div', { class: 'full mapbox' });
-  const link = el('a', { href: 'https://www.google.com/maps/search/?api=1&query=' + q, target: '_blank', rel: 'noopener noreferrer', text: 'Open in Google Maps' });
   box.append(el('span', { text: 'Map' }), el('div', { class: 'photoctl' },
     el('button', { class: 'btn small', type: 'button', text: 'Show map', onclick: () => {
       box.replaceChildren(el('span', { text: 'Map' }),
-        el('iframe', { class: 'map', src: 'https://www.google.com/maps?q=' + q + '&z=15&output=embed', title: 'Map of ' + fullName(s) + '’s home address', loading: 'lazy', referrerpolicy: 'no-referrer' }),
-        el('div', { class: 'photoctl' }, link));
-    } }), link));
+        el('iframe', { class: 'map', src: 'https://www.google.com/maps?q=' + encodeURIComponent(query) + '&z=15&output=embed', title, loading: 'lazy', referrerpolicy: 'no-referrer' }),
+        el('div', { class: 'photoctl' }, mapsLink(query)));
+    } }), mapsLink(query)));
   return box;
 }
+function addressMap(s) {
+  if (!s.street && !s.zip) return null;
+  return mapBox([s.street, [s.city, s.state].filter(Boolean).join(', '), s.zip].filter(Boolean).join(', '), 'Map of ' + fullName(s) + '’s home address');
+}
+// A school or company is easier for the map to find by name and address together.
+const orgQuery = (d) => [d.name, d.address].filter(Boolean).join(', ');
 function photoControls(s) {
   const err = el('span', { class: 'err', role: 'alert' });
   const input = el('input', { id: 'photo-file', type: 'file', accept: 'image/*', hidden: true, 'aria-label': 'Photo file' });
@@ -545,7 +549,7 @@ function renderOrgs(kind) {
   $(kind + '-empty').hidden = !loaded || list.length > 0; $(kind + '-box').hidden = !list.length;
   $(kind + '-rows').replaceChildren(...list.map((d) => el('tr', {},
     el('td', {}, el('button', { class: 'name', type: 'button', text: d.name, onclick: () => openOrg(kind, d) }), d.notes ? el('div', { class: 'sub', text: d.notes }) : null),
-    el('td', { text: d.address }), el('td', {}, d.contactName, d.contactTitle ? el('div', { class: 'sub', text: d.contactTitle }) : null),
+    el('td', {}, d.address, d.address ? el('div', { class: 'sub' }, mapsLink(orgQuery(d), 'Map')) : null), el('td', {}, d.contactName, d.contactTitle ? el('div', { class: 'sub', text: d.contactTitle }) : null),
     el('td', {}, d.contactPhone, d.contactEmail ? el('div', { class: d.contactPhone ? 'sub' : '', text: d.contactEmail }) : null),
     el('td', { text: d.uses }))));
 }
@@ -555,6 +559,7 @@ function openOrg(kind, d) {
   $('org-err').textContent = '';
   $('o-name').value = d ? d.name : ''; $('o-address').value = d ? d.address : ''; $('o-contact').value = d ? d.contactName : ''; $('o-title').value = d ? d.contactTitle : '';
   $('o-phone').value = d ? d.contactPhone : ''; $('o-email').value = d ? d.contactEmail : ''; $('o-notes').value = d ? d.notes : '';
+  $('o-map').replaceChildren(d && d.address ? mapBox(orgQuery(d), 'Map of ' + d.name) : '');
   $('org-delete').replaceChildren(d && me.role === 'admin' ? confirmBtn('Delete this ' + orgWord(kind), async () => {
     try { await api('DELETE', '/api/' + kind + '/' + d.id); $('dlg-org').close(); await load(); } catch (err) { $('org-err').textContent = err.message; }
   }) : '');
