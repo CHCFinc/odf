@@ -255,6 +255,20 @@ function confirmBtn(label, run) {
 }
 const act = async (method, url, body) => { try { await api(method, url, body); } catch (e) { /* the reload below shows the real state */ } await load(); };
 
+// The map is Google's. It loads only when someone asks for it, so an address is not sent to Google just by opening a record.
+function addressMap(s) {
+  if (!s.street && !s.zip) return null;
+  const q = encodeURIComponent([s.street, [s.city, s.state].filter(Boolean).join(', '), s.zip].filter(Boolean).join(', '));
+  const box = el('div', { class: 'full mapbox' });
+  const link = el('a', { href: 'https://www.google.com/maps/search/?api=1&query=' + q, target: '_blank', rel: 'noopener noreferrer', text: 'Open in Google Maps' });
+  box.append(el('span', { text: 'Map' }), el('div', { class: 'photoctl' },
+    el('button', { class: 'btn small', type: 'button', text: 'Show map', onclick: () => {
+      box.replaceChildren(el('span', { text: 'Map' }),
+        el('iframe', { class: 'map', src: 'https://www.google.com/maps?q=' + q + '&z=15&output=embed', title: 'Map of ' + fullName(s) + '’s home address', loading: 'lazy', referrerpolicy: 'no-referrer' }),
+        el('div', { class: 'photoctl' }, link));
+    } }), link));
+  return box;
+}
 function photoControls(s) {
   const err = el('span', { class: 'err', role: 'alert' });
   const input = el('input', { id: 'photo-file', type: 'file', accept: 'image/*', hidden: true, 'aria-label': 'Photo file' });
@@ -287,7 +301,7 @@ function renderDetail() {
     sect('Student contact',
       fact('Email', s.email), fact('Phone', s.phone), fact('Date of birth', fmtDate(s.dob) + (ageOf(s.dob) ? ' · age ' + ageOf(s.dob) : ''))),
     sect('Home address',
-      fact('Address', [s.street, s.apt].filter(Boolean).join(', ')), fact('City, state, zip', [[s.city, s.state].filter(Boolean).join(', '), s.zip].filter(Boolean).join(' ')), fact('NYCHA', s.nycha)),
+      fact('Address', [s.street, s.apt].filter(Boolean).join(', ')), fact('City, state, zip', [[s.city, s.state].filter(Boolean).join(', '), s.zip].filter(Boolean).join(' ')), fact('NYCHA', s.nycha), addressMap(s)),
     sect('Parent and emergency contacts',
       fact('Parent or guardian', s.parentName), fact('Parent email', s.parentEmail), fact('Parent phone', [s.parentPhone, s.parentPhone2].filter(Boolean).join(' · ')),
       fact('Emergency contact', s.emergencyName), fact('Emergency phone', s.emergencyPhone)),
